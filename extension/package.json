@@ -1,0 +1,193 @@
+{
+  "name": "pintos-test-explorer",
+  "displayName": "Pintos Test Explorer",
+  "description": "Run and debug Pintos test cases from a dedicated VS Code sidebar",
+  "version": "0.1.5",
+  "publisher": "YoojinKoh",
+  "license": "MIT",
+  "icon": "media/extension_icon.png",
+  "homepage": "https://github.com/bytekoh-1748/Pintos-Test-Explorer#readme",
+  "bugs": {
+    "url": "https://github.com/bytekoh-1748/Pintos-Test-Explorer/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bytekoh-1748/Pintos-Test-Explorer.git"
+  },
+  "galleryBanner": {
+    "color": "#0b1220"
+  },
+  "keywords": [
+    "pintos",
+    "gdb",
+    "debugger",
+    "qemu",
+    "operating-systems",
+    "education"
+  ],
+  "scripts": {
+    "package": "npx @vscode/vsce package",
+    "package:offline": "python3 ../scripts/build-pintos-test-explorer-vsix.py",
+    "publish": "npx @vscode/vsce publish",
+    "publish:patch": "npx @vscode/vsce publish patch",
+    "publish:minor": "npx @vscode/vsce publish minor",
+    "publish:major": "npx @vscode/vsce publish major",
+    "login": "npx @vscode/vsce login YoojinKoh"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Testing"
+  ],
+  "files": [
+    "extension.js",
+    "bundled/pintos-test-cli.py",
+    "bundled/pintos-gdb-server.sh",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.txt",
+    "SUPPORT.md",
+    "media/extension_icon.png",
+    "media/batch.svg",
+    "media/clear.svg",
+    "media/debug.svg",
+    "media/pintos.svg",
+    "media/play.svg",
+    "media/refresh.svg"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:pintosTests",
+    "onCommand:pintosTests.refresh",
+    "onCommand:pintosTests.runSelected",
+    "onCommand:pintosTests.clearChecked",
+    "onCommand:pintosTests.runProject",
+    "onCommand:pintosTests.runTest",
+    "onCommand:pintosTests.debugTest",
+    "onCommand:pintosTests.openArtifact"
+  ],
+  "main": "./extension.js",
+  "extensionDependencies": [
+    "ms-vscode.cpptools"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pintosExplorer",
+          "title": "Pintos",
+          "icon": "media/pintos.svg"
+        }
+      ]
+    },
+    "views": {
+      "pintosExplorer": [
+        {
+          "id": "pintosTests",
+          "name": "Pintos Tests"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pintosTests.refresh",
+        "title": "Refresh Pintos Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/refresh.svg",
+          "dark": "media/refresh.svg"
+        }
+      },
+      {
+        "command": "pintosTests.runSelected",
+        "title": "Run Checked Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/batch.svg",
+          "dark": "media/batch.svg"
+        }
+      },
+      {
+        "command": "pintosTests.clearChecked",
+        "title": "Clear Checked Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/clear.svg",
+          "dark": "media/clear.svg"
+        }
+      },
+      {
+        "command": "pintosTests.runProject",
+        "title": "Run All Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/play.svg",
+          "dark": "media/play.svg"
+        }
+      },
+      {
+        "command": "pintosTests.runTest",
+        "title": "Run Test",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/play.svg",
+          "dark": "media/play.svg"
+        }
+      },
+      {
+        "command": "pintosTests.debugTest",
+        "title": "Debug Test",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/debug.svg",
+          "dark": "media/debug.svg"
+        }
+      },
+      {
+        "command": "pintosTests.openArtifact",
+        "title": "Open Artifact",
+        "category": "Pintos"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pintosTests.refresh",
+          "when": "view == pintosTests",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.clearChecked",
+          "when": "view == pintosTests",
+          "group": "navigation@2"
+        },
+        {
+          "command": "pintosTests.runSelected",
+          "when": "view == pintosTests",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pintosTests.runProject",
+          "when": "view == pintosTests && viewItem == pintosProject",
+          "group": "inline@1"
+        },
+        {
+          "command": "pintosTests.debugTest",
+          "when": "view == pintosTests && viewItem == pintosTest",
+          "group": "inline@1"
+        },
+        {
+          "command": "pintosTests.runTest",
+          "when": "view == pintosTests && viewItem == pintosTest",
+          "group": "inline@2"
+        }
+      ]
+    }
+  }
+}
