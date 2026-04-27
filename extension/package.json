@@ -55,6 +55,7 @@
     "media/debug.svg",
     "media/pintos.svg",
     "media/play.svg",
+    "media/range.svg",
     "media/refresh.svg"
   ],
   "extensionKind": [
@@ -63,6 +64,7 @@
   "activationEvents": [
     "onView:pintosTests",
     "onCommand:pintosTests.refresh",
+    "onCommand:pintosTests.toggleSortOrder",
     "onCommand:pintosTests.runSelected",
     "onCommand:pintosTests.clearChecked",
     "onCommand:pintosTests.runProject",
@@ -109,6 +111,15 @@
         "icon": {
           "light": "media/batch.svg",
           "dark": "media/batch.svg"
+        }
+      },
+      {
+        "command": "pintosTests.toggleSortOrder",
+        "title": "Toggle Test Sort Order",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/range.svg",
+          "dark": "media/range.svg"
         }
       },
       {
@@ -161,14 +172,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "pintosTests.clearChecked",
+          "command": "pintosTests.toggleSortOrder",
           "when": "view == pintosTests",
           "group": "navigation@2"
         },
         {
-          "command": "pintosTests.runSelected",
+          "command": "pintosTests.clearChecked",
           "when": "view == pintosTests",
           "group": "navigation@3"
+        },
+        {
+          "command": "pintosTests.runSelected",
+          "when": "view == pintosTests",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

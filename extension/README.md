@@ -6,19 +6,11 @@ Run and debug Pintos test cases from a dedicated VS Code sidebar.
 
 ## Install
 
-### From Visual Studio Marketplace
-
 1. Open `Extensions` in VS Code.
 2. Search for `Pintos Test Explorer`.
 3. Click `Install`.
 4. If you are using a Dev Container, install it into the container.
 5. Run `Developer: Reload Window` once after installation.
-
-### From VSIX
-
-1. Open `Extensions: Install from VSIX...`.
-2. Select the downloaded VSIX file.
-3. Reload the window.
 
 After installation, look for the `P os` icon in the Activity Bar.
 
@@ -30,6 +22,7 @@ After installation, look for the `P os` icon in the Activity Bar.
 4. Click the green `Run` button next to a test to execute it.
 5. Click the orange `Debug` button to start a GDB debug session for a single test.
 6. Check multiple tests and use `Run Checked Tests` from the view toolbar for batch execution.
+7. Use the toolbar sort button to switch between `Number order` and `Latest first`.
 
 When a test has artifacts, the tree shows quick links for `output`, `result`, and `errors`.
 
@@ -51,6 +44,7 @@ This extension is designed for common Pintos lab workflows and is most reliable 
 - Run one test directly from its row
 - Debug one test with a GDB remote attach flow
 - Check multiple tests and run them as a batch
+- Toggle the tree between `Number order` and `Latest first`
 - Open `output`, `result`, and `errors` files directly from the tree
 - Build the visible test list dynamically from `Make.tests`
 
@@ -69,34 +63,32 @@ If debug startup fails, open the `Pintos Tests` output channel first. The extens
 
 ## Companion CLI
 
-This repository also includes a terminal-first companion CLI in the repository's `scripts/` directory. It is a repo companion, so installing the VS Code extension alone does not add `pintos-tests` to your shell automatically.
+This repository also includes a terminal-first companion CLI in the repository's `scripts/` directory. The official command name is `pintos-tests`, and a shorter `pt` shortcut is available for day-to-day use. It is a repo companion, so installing the VS Code extension alone does not add either command to your shell automatically.
 
-Run it directly from the repo:
+Recommended setup:
 
 ```bash
-./scripts/pintos-tests --help
-./scripts/pintos-tests list threads
-./scripts/pintos-tests run threads alarm-zero
-./scripts/pintos-tests debug threads alarm-single
+source scripts/install-pintos-cli.sh
+pt --help
 ```
 
 Common selector examples:
 
 ```bash
 # Run tests 11 through 20
-./scripts/pintos-tests run threads 11-20
+pt run threads 11-20
 
 # Mix ranges, exact names, and patterns
-./scripts/pintos-tests run threads 1 3-5 alarm-zero alarm-*
+pt run threads 1 3-5 alarm-zero alarm-*
 
 # Run every filesys test
-./scripts/pintos-tests run filesys all
+pt run filesys all
 
 # Debug exactly one test by number
-./scripts/pintos-tests debug threads 12
+pt debug threads 12
 
-# Show recently/frequently used tests first
-./scripts/pintos-tests list threads --recent-first
+# Show most recently used tests first
+pt list threads --recent-first
 ```
 
 Selector rules:
@@ -108,22 +100,32 @@ Selector rules:
 - `all` selects every test for `run`.
 - `debug` must resolve to exactly one test.
 
-`--recent-first` uses your local run/debug history and moves frequently used tests to the top of the list. The history is stored in `.vscode/pintos-test-history.json` inside the Pintos workspace.
+`--recent-first` uses your local run/debug history and moves the most recently used tests to the top of the list. The history is stored in `.vscode/pintos-test-history.json` inside the Pintos workspace.
 
-If you want `pintos-tests` available from any terminal:
+If you want `pintos-tests` and `pt` available from any terminal:
 
 ```bash
-bash scripts/install-pintos-cli.sh
+source scripts/install-pintos-cli.sh
 ```
 
-That installs a small wrapper at `~/.local/bin/pintos-tests`.
-Make sure `~/.local/bin` is on your `PATH`.
+That installs small wrappers at `~/.local/bin/pintos-tests` and `~/.local/bin/pt`.
+It also adds `~/.local/bin` to your shell profile so the commands keep working in future shells.
+
+Examples after install:
+
+```bash
+pt --help
+pt list threads
+pintos-tests debug vm 4 --server-only
+```
 
 If you prefer shell integration without installing a wrapper:
 
 ```bash
 source scripts/pintos-shell.sh
 ```
+
+That makes both `pintos-tests` and `pt` available in the current shell only.
 
 ## License
 

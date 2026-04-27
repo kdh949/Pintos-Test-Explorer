@@ -22,6 +22,14 @@ class CliError(Exception):
     pass
 
 
+PROJECT_SPECS: tuple[tuple[str, str], ...] = (
+    ("threads", "Threads"),
+    ("userprog", "User Programs"),
+    ("vm", "Virtual Memory"),
+    ("filesys", "File System"),
+)
+
+
 def discover_repo_root() -> Path:
     candidates: list[Path] = []
     direct_root = os.environ.get("PINTOS_ROOT")
@@ -60,11 +68,11 @@ def discover_repo_root() -> Path:
     )
 
 
-ROOT_DIR = discover_repo_root()
-UTILS_DIR = ROOT_DIR / "utils"
 GDB_SERVER_SCRIPT = Path(__file__).resolve().with_name("pintos-gdb-server.sh")
 ARTIFACT_KINDS = ("output", "result", "errors")
-HISTORY_FILE = ROOT_DIR / ".vscode" / "pintos-test-history.json"
+ROOT_DIR: Path | None = None
+UTILS_DIR: Path | None = None
+HISTORY_FILE: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -85,43 +93,61 @@ class TestEntry:
     group: str
 
 
-PROJECTS: dict[str, ProjectMeta] = {
-    "threads": ProjectMeta(
-        name="threads",
-        label="Threads",
-        project_dir=ROOT_DIR / "threads",
-        build_dir=ROOT_DIR / "threads" / "build",
-        kernel_path=ROOT_DIR / "threads" / "build" / "kernel.o",
-        prefixes=("tests/threads/",),
-    ),
-    "userprog": ProjectMeta(
-        name="userprog",
-        label="User Programs",
-        project_dir=ROOT_DIR / "userprog",
-        build_dir=ROOT_DIR / "userprog" / "build",
-        kernel_path=ROOT_DIR / "userprog" / "build" / "kernel.o",
-        prefixes=("tests/userprog/",),
-    ),
-    "vm": ProjectMeta(
-        name="vm",
-        label="Virtual Memory",
-        project_dir=ROOT_DIR / "vm",
-        build_dir=ROOT_DIR / "vm" / "build",
-        kernel_path=ROOT_DIR / "vm" / "build" / "kernel.o",
-        prefixes=("tests/vm/",),
-    ),
-    "filesys": ProjectMeta(
-        name="filesys",
-        label="File System",
-        project_dir=ROOT_DIR / "filesys",
-        build_dir=ROOT_DIR / "filesys" / "build",
-        kernel_path=ROOT_DIR / "filesys" / "build" / "kernel.o",
-        prefixes=("tests/filesys/",),
-    ),
-}
+PROJECTS: dict[str, ProjectMeta] = {}
+
+
+def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
+    return {
+        "threads": ProjectMeta(
+            name="threads",
+            label="Threads",
+            project_dir=root_dir / "threads",
+            build_dir=root_dir / "threads" / "build",
+            kernel_path=root_dir / "threads" / "build" / "kernel.o",
+            prefixes=("tests/threads/",),
+        ),
+        "userprog": ProjectMeta(
+            name="userprog",
+            label="User Programs",
+            project_dir=root_dir / "userprog",
+            build_dir=root_dir / "userprog" / "build",
+            kernel_path=root_dir / "userprog" / "build" / "kernel.o",
+            prefixes=("tests/userprog/",),
+        ),
+        "vm": ProjectMeta(
+            name="vm",
+            label="Virtual Memory",
+            project_dir=root_dir / "vm",
+            build_dir=root_dir / "vm" / "build",
+            kernel_path=root_dir / "vm" / "build" / "kernel.o",
+            prefixes=("tests/vm/",),
+        ),
+        "filesys": ProjectMeta(
+            name="filesys",
+            label="File System",
+            project_dir=root_dir / "filesys",
+            build_dir=root_dir / "filesys" / "build",
+            kernel_path=root_dir / "filesys" / "build" / "kernel.o",
+            prefixes=("tests/filesys/",),
+        ),
+    }
+
+
+def ensure_runtime() -> None:
+    global ROOT_DIR, UTILS_DIR, HISTORY_FILE, PROJECTS
+    if ROOT_DIR is not None:
+        return
+
+    ROOT_DIR = discover_repo_root()
+    UTILS_DIR = ROOT_DIR / "utils"
+    HISTORY_FILE = ROOT_DIR / ".vscode" / "pintos-test-history.json"
+    PROJECTS = build_projects(ROOT_DIR)
 
 
 def make_env() -> dict[str, str]:
+    ensure_runtime()
+    assert ROOT_DIR is not None
+    assert UTILS_DIR is not None
     env = os.environ.copy()
     env["PATH"] = f"{UTILS_DIR}:{env.get('PATH', '')}"
     env["PINTOS_ROOT"] = str(ROOT_DIR)
@@ -130,6 +156,8 @@ def make_env() -> dict[str, str]:
 
 
 def load_history() -> dict[str, dict[str, dict[str, float | int]]]:
+    ensure_runtime()
+    assert HISTORY_FILE is not None
     if not HISTORY_FILE.exists():
         return {}
     try:
@@ -176,7 +204,7 @@ def sort_entries_by_history(meta: ProjectMeta, entries: list[TestEntry], *, rece
         item = history.get(entry.full_name, {})
         count = float(item.get("count", 0))
         last_used = float(item.get("last_used", 0))
-        return (-count, -last_used, entry.index)
+        return (-last_used, -count, entry.index)
 
     return sorted(entries, key=sort_key)
 
@@ -401,20 +429,35 @@ def print_test_list(entries: list[TestEntry], stream: object) -> None:
 
 
 def project_choices_text() -> str:
-    return ", ".join(PROJECTS.keys())
+    return ", ".join(name for name, _label in PROJECT_SPECS)
 
 
 def list_projects(json_mode: bool) -> int:
+    build_dir_by_name: dict[str, str] = {}
+    try:
+        ensure_runtime()
+    except CliError:
+        pass
+    else:
+        build_dir_by_name = {
+            meta.name: str(meta.build_dir)
+            for meta in PROJECTS.values()
+        }
+
     if json_mode:
         payload = [
-            {"name": meta.name, "label": meta.label, "build_dir": str(meta.build_dir)}
-            for meta in PROJECTS.values()
+            {
+                "name": name,
+                "label": label,
+                "build_dir": build_dir_by_name.get(name),
+            }
+            for name, label in PROJECT_SPECS
         ]
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    for meta in PROJECTS.values():
-        print(f"{meta.name:<8} {meta.label}")
+    for name, label in PROJECT_SPECS:
+        print(f"{name:<8} {label}")
     return 0
 
 
@@ -744,12 +787,13 @@ def build_parser() -> argparse.ArgumentParser:
     projects_parser.add_argument("--json", action="store_true", help="Print as JSON")
 
     list_parser = subparsers.add_parser("list", help="Show the test list for a project")
-    list_parser.add_argument("project", choices=PROJECTS.keys(), help=f"Project ({project_choices_text()})")
+    project_names = [name for name, _label in PROJECT_SPECS]
+    list_parser.add_argument("project", choices=project_names, help=f"Project ({project_choices_text()})")
     list_parser.add_argument("--json", action="store_true", help="Print as JSON")
     list_parser.add_argument(
         "--recent-first",
         action="store_true",
-        help="Sort recently or frequently used tests first",
+        help="Sort most recently used tests first",
     )
 
     pick_parser = subparsers.add_parser(
@@ -757,24 +801,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print selected tests by name (automation)",
         description="Select tests and print only their names (internal/script use)",
     )
-    pick_parser.add_argument("project", choices=PROJECTS.keys())
+    pick_parser.add_argument("project", choices=project_names)
     pick_parser.add_argument("selectors", nargs="*", help="Number, range, name, or pattern")
     pick_parser.add_argument("--single", action="store_true", help="Require exactly one match")
-    pick_parser.add_argument("--recent-first", action="store_true", help="Sort recently or frequently used tests first")
+    pick_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first")
 
     run_parser = subparsers.add_parser("run", help="Run tests")
-    run_parser.add_argument("project", choices=PROJECTS.keys())
+    run_parser.add_argument("project", choices=project_names)
     run_parser.add_argument(
         "selectors",
         nargs="*",
         help="Number, range, name, pattern, or all",
     )
-    run_parser.add_argument("--recent-first", action="store_true", help="Sort recently or frequently used tests first during interactive selection")
+    run_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first during interactive selection")
 
     debug_parser = subparsers.add_parser("debug", help="Debug a test")
-    debug_parser.add_argument("project", choices=PROJECTS.keys())
+    debug_parser.add_argument("project", choices=project_names)
     debug_parser.add_argument("selectors", nargs="*", help="Exactly one number or test name")
-    debug_parser.add_argument("--recent-first", action="store_true", help="Sort recently or frequently used tests first during interactive selection")
+    debug_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first during interactive selection")
     debug_parser.add_argument(
         "--server-only",
         action="store_true",
@@ -782,10 +826,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     artifacts_parser = subparsers.add_parser("artifacts", help="Show test artifact paths")
-    artifacts_parser.add_argument("project", choices=PROJECTS.keys())
+    artifacts_parser.add_argument("project", choices=project_names)
     artifacts_parser.add_argument("selectors", nargs="+", help="Exactly one number or test name")
     artifacts_parser.add_argument("--json", action="store_true", help="Print as JSON")
-    artifacts_parser.add_argument("--recent-first", action="store_true", help="Sort recently or frequently used tests first")
+    artifacts_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first")
 
     return parser
 
@@ -798,6 +842,7 @@ def main() -> int:
         if args.command == "projects":
             return list_projects(args.json)
 
+        ensure_runtime()
         meta = PROJECTS[args.project]
 
         if args.command == "list":

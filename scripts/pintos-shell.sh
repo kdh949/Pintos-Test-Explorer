@@ -3,6 +3,11 @@
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 
 case ":$PATH:" in
+  *":$ROOT_DIR:"*) ;;
+  *) export PATH="$ROOT_DIR:$PATH" ;;
+esac
+
+case ":$PATH:" in
   *":$ROOT_DIR/scripts:"*) ;;
   *) export PATH="$ROOT_DIR/scripts:$PATH" ;;
 esac

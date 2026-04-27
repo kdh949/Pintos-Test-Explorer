@@ -3,10 +3,12 @@
 ## 0.1.5
 
 - Refreshed the unpublished `0.1.5` package metadata so the repository, homepage, and issue links all point to the standalone `Pintos-Test-Explorer` GitHub repository.
-- Added a local offline VSIX packaging script so this standalone repository can rebuild the extension without depending on the old monorepo tooling.
+- Added a toolbar sort toggle so the Pintos test tree can switch between `Number order` and `Latest first`.
+- Changed recent-first ordering to prioritize the most recently run or debugged tests, and tightened the clear-checked flow so it fully refreshes the tree state.
+- Cleaned up the CLI setup and public documentation so `pt` is easier to enable and use from the terminal.
 - Switched the CLI help text and user-facing extension messages to English for global users.
 - Added documented range and mixed-selector examples to the README, including `11-20` style multi-test runs.
-- Kept recent-first ordering and debug-path improvements from earlier patches while making the public UX fully English.
+- Kept the debug-path improvements from earlier patches while making the public UX fully English.
 
 ## 0.1.4
 

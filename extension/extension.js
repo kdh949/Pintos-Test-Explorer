@@ -37,6 +37,10 @@ const PROJECTS = {
 const PROJECT_ORDER = ["threads", "userprog", "vm", "filesys"];
 const ARTIFACT_ORDER = ["output", "result", "errors"];
 const HISTORY_FILE = path.join(".vscode", "pintos-test-history.json");
+const SORT_MODE_NUMBER = "number";
+const SORT_MODE_RECENT = "recent";
+const DEFAULT_SORT_MODE = SORT_MODE_NUMBER;
+const SORT_MODE_STATE_KEY = "pintosTests.sortMode";
 
 let treeView = null;
 let provider = null;
@@ -73,17 +77,35 @@ class ArtifactNode {
 }
 
 class PintosTreeProvider {
-  constructor(rootPath) {
+  constructor(rootPath, sortMode = DEFAULT_SORT_MODE) {
     this.rootPath = rootPath;
     this._onDidChangeTreeData = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._onDidChangeTreeData.event;
     this.testCache = new Map();
     this.checkedTestKeys = new Set();
+    this.sortMode = normalizeSortMode(sortMode);
   }
 
-  refresh() {
+  refresh(options = {}) {
+    if (options.clearChecked) {
+      this.checkedTestKeys.clear();
+    }
     this.testCache.clear();
     this._onDidChangeTreeData.fire();
+  }
+
+  getSortMode() {
+    return this.sortMode;
+  }
+
+  setSortMode(sortMode) {
+    const nextSortMode = normalizeSortMode(sortMode);
+    if (this.sortMode === nextSortMode) {
+      return false;
+    }
+    this.sortMode = nextSortMode;
+    this.refresh();
+    return true;
   }
 
   makeTestKey(project, test) {
@@ -104,8 +126,7 @@ class PintosTreeProvider {
   }
 
   clearChecked() {
-    this.checkedTestKeys.clear();
-    this._onDidChangeTreeData.fire();
+    this.refresh({ clearChecked: true });
   }
 
   async getCheckedNodes() {
@@ -234,9 +255,13 @@ class PintosTreeProvider {
     const scriptPath = bundledHelperPath("pintos-test-cli.py");
     let tests = [];
     try {
+      const args = [scriptPath, "list", project.key, "--json"];
+      if (this.sortMode === SORT_MODE_RECENT) {
+        args.push("--recent-first");
+      }
       const stdout = await execFileCapture(
         "python3",
-        [scriptPath, "list", project.key, "--json", "--recent-first"],
+        args,
         { cwd: this.rootPath, env: makeEnv(this.rootPath) }
       );
       tests = JSON.parse(stdout);
@@ -294,6 +319,14 @@ function artifactIcon(kind) {
     return new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
   }
   return new vscode.ThemeIcon("output", new vscode.ThemeColor("charts.blue"));
+}
+
+function normalizeSortMode(sortMode) {
+  return sortMode === SORT_MODE_RECENT ? SORT_MODE_RECENT : SORT_MODE_NUMBER;
+}
+
+function sortModeLabel(sortMode) {
+  return sortMode === SORT_MODE_RECENT ? "Latest first" : "Number order";
 }
 
 function readResultStatus(resultPath) {
@@ -679,6 +712,15 @@ function registerCommand(context, name, fn) {
   context.subscriptions.push(vscode.commands.registerCommand(name, fn));
 }
 
+function syncSortModeState(context, sortMode) {
+  const normalized = normalizeSortMode(sortMode);
+  if (treeView) {
+    treeView.description = sortModeLabel(normalized);
+  }
+  void context.workspaceState.update(SORT_MODE_STATE_KEY, normalized);
+  void vscode.commands.executeCommand("setContext", SORT_MODE_STATE_KEY, normalized);
+}
+
 function activate(context) {
   extensionInstallPath = context.extensionPath;
   const rootPath = getWorkspaceRoot();
@@ -695,13 +737,17 @@ function activate(context) {
 
   outputChannel.appendLine(`Pintos root: ${rootPath}`);
   outputChannel.appendLine(`Extension path: ${extensionInstallPath}`);
-  provider = new PintosTreeProvider(rootPath);
+  const initialSortMode = normalizeSortMode(
+    context.workspaceState.get(SORT_MODE_STATE_KEY)
+  );
+  provider = new PintosTreeProvider(rootPath, initialSortMode);
   treeView = vscode.window.createTreeView("pintosTests", {
     treeDataProvider: provider,
     // Keep multi-run behavior in a single place: the tree checkboxes.
     canSelectMany: false,
     showCollapseAll: true
   });
+  syncSortModeState(context, initialSortMode);
 
   context.subscriptions.push(outputChannel, treeView);
   outputChannel.appendLine("Pintos Test Explorer activated.");
@@ -720,6 +766,14 @@ function activate(context) {
   }
 
   registerCommand(context, "pintosTests.refresh", () => provider.refresh());
+  registerCommand(context, "pintosTests.toggleSortOrder", () => {
+    const nextSortMode =
+      provider.getSortMode() === SORT_MODE_RECENT
+        ? SORT_MODE_NUMBER
+        : SORT_MODE_RECENT;
+    provider.setSortMode(nextSortMode);
+    syncSortModeState(context, nextSortMode);
+  });
   registerCommand(context, "pintosTests.clearChecked", () => provider.clearChecked());
   registerCommand(context, "pintosTests.runSelected", async () => {
     const checked = await provider.getCheckedNodes();
