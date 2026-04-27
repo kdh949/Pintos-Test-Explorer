@@ -1,6 +1,8 @@
 # Pintos Test Explorer
 
-Run and debug Pintos tests from VS Code, and use the same test workflow from the terminal with `pt`.
+Languages: English | [한국어](README.ko.md)
+
+Run, debug, reset, and inspect Pintos tests from VS Code, and use the same workflow from the terminal with `pt`.
 
 ## Install
 
@@ -41,7 +43,7 @@ pt --help
 5. Click the orange `Debug` action to start a GDB session for one test.
 6. Check multiple tests and use `Run Checked Tests` from the toolbar.
 7. Use the sort button to switch between `Number order` and `Latest first`.
-8. Use the trash button to clear checked tests and delete existing `output`, `result`, and `errors` artifacts.
+8. Use the leftmost red `Reset All Tests` button to clear the whole workspace, or use `Reset Checked Tests` to reset only the selected tests.
 
 When a test already has artifacts, the tree shows links for `output`, `result`, and `errors`.
 
@@ -52,6 +54,8 @@ Inside a Pintos workspace:
 ```bash
 pt projects
 pt list threads
+pt reset threads alarm-zero
+pt reset-all
 pt run threads alarm-zero
 pt run threads 11-20
 pt debug vm 4 --server-only
@@ -74,7 +78,9 @@ PINTOS_ROOT=/path/to/pintos pt run filesys all
 - Run multiple tests at once with checkbox selection or CLI selectors
 - Open test artifacts such as `output`, `result`, and `errors`
 - Reorder the test list with `Number order` or `Latest first`
-- Clear checked tests and existing artifact logs from the toolbar
+- Reset only checked tests or clear every check and artifact from the toolbar
+- Mark build-time run failures as `FAIL` in the test tree instead of leaving them as `Not run`
+- Reset selected tests or the whole workspace from the CLI
 - Use `--recent-first` in the CLI to prioritize recently used tests
 
 ## CLI Examples
@@ -83,6 +89,9 @@ Common commands:
 
 ```bash
 pt list threads --recent-first
+pt reset threads 4 7-9 alarm-zero
+pt reset threads all
+pt reset-all
 pt run threads 1 3-5 alarm-zero alarm-*
 pt run filesys all
 pt debug threads 12
@@ -95,7 +104,7 @@ Selector rules:
 - `alarm-zero` selects by exact short name.
 - `tests/threads/alarm-zero` also works.
 - `alarm-*` works as a wildcard pattern.
-- `all` selects every test for `run`.
+- `all` selects every test for `run` and project-scoped `reset`.
 - `debug` must resolve to exactly one test.
 
 ## Requirements
@@ -112,6 +121,7 @@ Selector rules:
 
 - If `pt list ...` says it cannot find a Pintos project root, open the real Pintos workspace or set `PINTOS_ROOT=/path/to/pintos`.
 - If VS Code debug startup fails, open the `Pintos Tests` output channel first.
+- If a run stops at a compile or build error, the extension now marks that test as `FAIL` and keeps the captured error output in the artifacts.
 - If debugging does not start, confirm that `gdb` is installed in the active environment.
 
 ## More Details

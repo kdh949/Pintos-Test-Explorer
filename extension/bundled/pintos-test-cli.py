@@ -619,6 +619,57 @@ def artifact_paths(meta: ProjectMeta, entry: TestEntry) -> dict[str, Path]:
     }
 
 
+def existing_artifact_paths(meta: ProjectMeta, entry: TestEntry) -> list[Path]:
+    return [
+        path
+        for path in artifact_paths(meta, entry).values()
+        if path.exists()
+    ]
+
+
+def remove_artifact_paths(paths: list[Path]) -> tuple[int, list[str]]:
+    removed_count = 0
+    failures: list[str] = []
+    seen: set[Path] = set()
+
+    for path in paths:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            path.unlink()
+            removed_count += 1
+        except OSError as exc:
+            failures.append(f"{path}: {exc}")
+
+    return removed_count, failures
+
+
+def ensure_failed_run_artifacts(meta: ProjectMeta, entry: TestEntry, *, details: str) -> None:
+    paths = artifact_paths(meta, entry)
+    paths["result"].parent.mkdir(parents=True, exist_ok=True)
+    paths["result"].write_text("FAIL\n", encoding="utf-8")
+
+    if not paths["errors"].exists():
+        text = details.strip() or "Run failed before Pintos could produce an errors artifact."
+        paths["errors"].write_text(f"{text}\n", encoding="utf-8")
+
+
+def collect_workspace_artifact_paths() -> list[Path]:
+    ensure_runtime()
+    files: list[Path] = []
+
+    for meta in PROJECTS.values():
+        tests_dir = meta.build_dir / "tests"
+        if not tests_dir.exists():
+            continue
+        for path in tests_dir.rglob("*"):
+            if path.is_file() and path.suffix.lstrip(".") in ARTIFACT_KINDS:
+                files.append(path)
+
+    return files
+
+
 def summarize_result(meta: ProjectMeta, entry: TestEntry) -> tuple[bool, str]:
     result_path = artifact_paths(meta, entry)["result"]
     if not result_path.exists():
@@ -646,6 +697,63 @@ def print_artifacts(meta: ProjectMeta, entry: TestEntry, json_mode: bool) -> int
     return 0
 
 
+def reset_selected_tests(meta: ProjectMeta, entries: list[TestEntry], *, json_mode: bool) -> int:
+    paths = [
+        path
+        for entry in entries
+        for path in existing_artifact_paths(meta, entry)
+    ]
+    removed_count, failures = remove_artifact_paths(paths)
+
+    summary = {
+        "scope": "project",
+        "project": meta.name,
+        "tests": [entry.short_name for entry in entries],
+        "removed_artifacts": removed_count,
+        "errors": failures,
+    }
+    if json_mode:
+        print(json.dumps(summary, ensure_ascii=False))
+    else:
+        print("", file=sys.stderr)
+        print(
+            f"[{meta.name}] Reset {len(entries)} test(s): removed {removed_count} artifact file(s)",
+            file=sys.stderr,
+        )
+        if failures:
+            print("Some artifacts could not be removed:", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+
+    return 0 if not failures else 1
+
+
+def reset_all_tests(*, json_mode: bool) -> int:
+    paths = collect_workspace_artifact_paths()
+    removed_count, failures = remove_artifact_paths(paths)
+
+    summary = {
+        "scope": "workspace",
+        "projects": [meta.name for meta in PROJECTS.values()],
+        "removed_artifacts": removed_count,
+        "errors": failures,
+    }
+    if json_mode:
+        print(json.dumps(summary, ensure_ascii=False))
+    else:
+        print("", file=sys.stderr)
+        print(
+            f"[workspace] Reset all tests: removed {removed_count} artifact file(s)",
+            file=sys.stderr,
+        )
+        if failures:
+            print("Some artifacts could not be removed:", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+
+    return 0 if not failures else 1
+
+
 def run_selected_tests(meta: ProjectMeta, entries: list[TestEntry]) -> int:
     ensure_build_tree(meta)
     record_history(meta, entries, action="run")
@@ -656,16 +764,51 @@ def run_selected_tests(meta: ProjectMeta, entries: list[TestEntry]) -> int:
     failures = 0
     for offset, entry in enumerate(entries, start=1):
         print(f"[{offset}/{len(entries)}] {entry.short_name}", file=sys.stderr, flush=True)
+        _removed, cleanup_failures = remove_artifact_paths(existing_artifact_paths(meta, entry))
+        if cleanup_failures:
+            failures += 1
+            print("Could not remove existing artifacts before rerun:", file=sys.stderr)
+            for failure in cleanup_failures:
+                print(f"- {failure}", file=sys.stderr)
+            print("", file=sys.stderr)
+            ensure_failed_run_artifacts(
+                meta,
+                entry,
+                details="\n".join(
+                    [
+                        "Run failed before execution because existing artifacts could not be removed.",
+                        *[f"- {failure}" for failure in cleanup_failures],
+                    ]
+                ),
+            )
+            continue
         target = f"{entry.full_name}.result"
-        completed = subprocess.run(
+        run_log: list[str] = []
+        completed = subprocess.Popen(
             ["make", "-C", str(meta.build_dir), "--no-print-directory", target],
             env=make_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
+        assert completed.stdout is not None
+        for line in completed.stdout:
+            sys.stderr.write(line)
+            sys.stderr.flush()
+            run_log.append(line)
+        return_code = completed.wait()
+
+        if return_code != 0:
+            ensure_failed_run_artifacts(
+                meta,
+                entry,
+                details="".join(run_log).strip() or f"make exited with {return_code}",
+            )
 
         passed, status = summarize_result(meta, entry)
-        if completed.returncode != 0:
+        if return_code != 0:
             passed = False
-            status = f"make exited with {completed.returncode}"
+            status = f"make exited with {return_code}"
 
         if passed:
             print(f"PASS  {entry.short_name}", file=sys.stderr)
@@ -773,6 +916,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  pintos-tests projects\n"
             "  pintos-tests list threads\n"
             "  pintos-tests list threads --recent-first\n"
+            "  pintos-tests reset threads 4 7-9 alarm-zero\n"
+            "  pintos-tests reset threads all\n"
+            "  pintos-tests reset-all\n"
             "  pintos-tests run threads 1 3-5 alarm-zero\n"
             "  pintos-tests run threads 11-20\n"
             "  pintos-tests run filesys all\n"
@@ -825,6 +971,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start only the Pintos GDB server without attaching GDB",
     )
 
+    reset_parser = subparsers.add_parser("reset", help="Delete test artifacts for selected tests")
+    reset_parser.add_argument("project", choices=project_names)
+    reset_parser.add_argument(
+        "selectors",
+        nargs="*",
+        help="Number, range, name, pattern, or all",
+    )
+    reset_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first during interactive selection")
+    reset_parser.add_argument("--json", action="store_true", help="Print a JSON summary")
+
+    reset_all_parser = subparsers.add_parser("reset-all", help="Delete every test artifact in the workspace")
+    reset_all_parser.add_argument("--json", action="store_true", help="Print a JSON summary")
+
     artifacts_parser = subparsers.add_parser("artifacts", help="Show test artifact paths")
     artifacts_parser.add_argument("project", choices=project_names)
     artifacts_parser.add_argument("selectors", nargs="+", help="Exactly one number or test name")
@@ -841,6 +1000,10 @@ def main() -> int:
     try:
         if args.command == "projects":
             return list_projects(args.json)
+
+        if args.command == "reset-all":
+            ensure_runtime()
+            return reset_all_tests(json_mode=args.json)
 
         ensure_runtime()
         meta = PROJECTS[args.project]
@@ -885,6 +1048,17 @@ def main() -> int:
                 stream=sys.stderr,
             )
             return debug_test(meta, entries[0], server_only=args.server_only)
+
+        if args.command == "reset":
+            entries = pick_entries(
+                meta,
+                single=False,
+                selectors=args.selectors,
+                allow_all=True,
+                recent_first=args.recent_first,
+                stream=sys.stderr,
+            )
+            return reset_selected_tests(meta, entries, json_mode=args.json)
 
         if args.command == "artifacts":
             entries = pick_entries(

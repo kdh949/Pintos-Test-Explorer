@@ -246,6 +246,32 @@ is_tcp_port_listening() {
   return 1
 }
 
+describe_listening_port() {
+  local port="$1"
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local details
+  details="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
+  if [[ -n "$details" ]]; then
+    echo "Current listener(s) on port $port:" >&2
+    printf '%s\n' "$details" >&2
+  fi
+}
+
+ensure_gdb_port_available() {
+  if ! is_tcp_port_listening 1234; then
+    return 0
+  fi
+
+  echo "Port 1234 is already in use, so the Pintos GDB server cannot start." >&2
+  echo "Stop the existing listener on 127.0.0.1:1234 and try again." >&2
+  describe_listening_port 1234
+  return 1
+}
+
 wait_for_gdb_port() {
   local server_pid="$1"
 
@@ -282,6 +308,7 @@ start_server() {
   mkdir -p "$STATE_DIR"
   stop_server || true
   ensure_pintos_path
+  ensure_gdb_port_available
 
   make -C "$project_dir" >/dev/null
 

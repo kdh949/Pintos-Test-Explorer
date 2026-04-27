@@ -1,6 +1,8 @@
 # Pintos Test Explorer
 
-Run and debug Pintos test cases from a dedicated VS Code sidebar.
+Languages: English | [한국어](README.ko.md)
+
+Run, debug, reset, and inspect Pintos test cases from a dedicated VS Code sidebar.
 
 `Pintos Test Explorer` is a workspace-focused extension for common Pintos lab environments, including the `pintos_22.04_lab_docker` workflow. It shows the built-in Pintos test suites in a tree, lets you run one test or many tests without memorizing names, and starts GDB-backed debugging directly from the UI.
 
@@ -23,7 +25,7 @@ After installation, look for the `P os` icon in the Activity Bar.
 5. Click the orange `Debug` button to start a GDB debug session for a single test.
 6. Check multiple tests and use `Run Checked Tests` from the view toolbar for batch execution.
 7. Use the toolbar sort button to switch between `Number order` and `Latest first`.
-8. Use the trash button to clear checked tests and remove existing `output`, `result`, and `errors` artifacts.
+8. Use the leftmost red `Reset All Tests` button to clear the whole workspace, or use `Reset Checked Tests` to reset only the selected tests.
 
 When a test has artifacts, the tree shows quick links for `output`, `result`, and `errors`.
 
@@ -46,7 +48,8 @@ This extension is designed for common Pintos lab workflows and is most reliable 
 - Debug one test with a GDB remote attach flow
 - Check multiple tests and run them as a batch
 - Toggle the tree between `Number order` and `Latest first`
-- Clear checked tests and remove existing `output`, `result`, and `errors` artifacts from the toolbar
+- Reset checked tests only, or clear every check and artifact from the toolbar
+- Mark build-time run failures as `FAIL` in the tree instead of leaving them as `Not run`
 - Open `output`, `result`, and `errors` files directly from the tree
 - Build the visible test list dynamically from `Make.tests`
 
@@ -63,6 +66,8 @@ The expected flow is:
 
 If debug startup fails, open the `Pintos Tests` output channel first. The extension prints recent helper logs there, which usually show whether the problem is a missing `gdb`, a build failure, or a test command resolution issue.
 
+If a test run fails before Pintos can generate its normal artifacts, the extension now writes a synthetic `FAIL` result and keeps the captured build error in `errors` so the tree reflects the failure immediately.
+
 ## Companion CLI
 
 This repository also includes a terminal-first companion CLI in the repository's `scripts/` directory. The official command name is `pintos-tests`, and a shorter `pt` shortcut is available for day-to-day use. It is a repo companion, so installing the VS Code extension alone does not add either command to your shell automatically.
@@ -77,11 +82,18 @@ pt --help
 Common selector examples:
 
 ```bash
+# Reset one test or a project-wide selection
+pt reset threads alarm-zero
+pt reset threads all
+
 # Run tests 11 through 20
 pt run threads 11-20
 
 # Mix ranges, exact names, and patterns
 pt run threads 1 3-5 alarm-zero alarm-*
+
+# Reset the entire workspace
+pt reset-all
 
 # Run every filesys test
 pt run filesys all
@@ -99,7 +111,7 @@ Selector rules:
 - `alarm-zero` selects by exact short name.
 - `tests/threads/alarm-zero` also works.
 - `alarm-*` works as a wildcard pattern.
-- `all` selects every test for `run`.
+- `all` selects every test for `run` and project-scoped `reset`.
 - `debug` must resolve to exactly one test.
 
 `--recent-first` uses your local run/debug history and moves the most recently used tests to the top of the list. The history is stored in `.vscode/pintos-test-history.json` inside the Pintos workspace.

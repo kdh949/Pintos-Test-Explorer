@@ -129,6 +129,15 @@ class PintosTreeProvider {
     this.refresh({ clearChecked: true });
   }
 
+  clearCheckedNodes(nodes) {
+    for (const node of nodes) {
+      if (node?.nodeType === "test") {
+        this.checkedTestKeys.delete(this.makeTestKey(node.project, node.test));
+      }
+    }
+    this.refresh();
+  }
+
   async getCheckedNodes() {
     const selected = [];
     for (const key of PROJECT_ORDER) {
@@ -275,12 +284,9 @@ class PintosTreeProvider {
 
   buildTestNode(project, test) {
     const artifactPaths = {};
+    const candidates = artifactPathsForTest(this.rootPath, project, test);
     for (const kind of ARTIFACT_ORDER) {
-      const candidate = path.join(
-        this.rootPath,
-        ...project.buildDir,
-        `${test.full_name}.${kind}`
-      );
+      const candidate = candidates[kind];
       artifactPaths[kind] = fs.existsSync(candidate) ? candidate : null;
     }
     const status = readResultStatus(artifactPaths.result);
@@ -367,18 +373,93 @@ function findWorkspaceArtifactFiles(rootPath) {
   return files;
 }
 
-async function closeOpenArtifactTabs(rootPath) {
+function artifactPathsForTest(rootPath, project, test) {
+  const artifactPaths = {};
+  for (const kind of ARTIFACT_ORDER) {
+    artifactPaths[kind] = path.join(
+      rootPath,
+      ...project.buildDir,
+      `${test.full_name}.${kind}`
+    );
+  }
+  return artifactPaths;
+}
+
+function findNodeArtifactFiles(nodes) {
+  const files = new Set();
+  for (const node of normalizeTestSelection(nodes)) {
+    for (const kind of ARTIFACT_ORDER) {
+      const filePath = node?.artifactPaths?.[kind];
+      if (filePath && fs.existsSync(filePath)) {
+        files.add(filePath);
+      }
+    }
+  }
+  return [...files];
+}
+
+function removeArtifactFiles(filePaths) {
+  let removedCount = 0;
+  const failures = [];
+  const seen = new Set();
+
+  for (const filePath of filePaths) {
+    if (!filePath || seen.has(filePath) || !fs.existsSync(filePath)) {
+      continue;
+    }
+    seen.add(filePath);
+    try {
+      fs.unlinkSync(filePath);
+      removedCount += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${filePath}: ${message}`);
+    }
+  }
+
+  return { removedCount, failures };
+}
+
+function ensureFailedRunArtifacts(rootPath, project, test, detailText) {
+  const artifactPaths = artifactPathsForTest(rootPath, project, test);
+  fs.mkdirSync(path.dirname(artifactPaths.result), { recursive: true });
+  fs.writeFileSync(artifactPaths.result, "FAIL\n");
+
+  if (!fs.existsSync(artifactPaths.errors)) {
+    const details = detailText?.trim()
+      ? detailText.trimEnd()
+      : "Run failed before Pintos could produce an errors artifact.";
+    fs.writeFileSync(artifactPaths.errors, `${details}\n`);
+  }
+}
+
+function writeArtifactCleanupSummary({ closedTabCount, removedCount, failures, scopeLabel }) {
+  outputChannel.appendLine(
+    `${scopeLabel}: removed ${removedCount} artifact file(s), closed ${closedTabCount} artifact tab(s).`
+  );
+  if (!failures.length) {
+    return;
+  }
+  outputChannel.appendLine("Some artifacts could not be removed:");
+  for (const failure of failures) {
+    outputChannel.appendLine(`- ${failure}`);
+  }
+}
+
+async function closeOpenArtifactTabs(rootPath, artifactFiles = null) {
   if (!vscode.window.tabGroups?.all || typeof vscode.window.tabGroups.close !== "function") {
     return 0;
   }
 
+  const allowedFiles = artifactFiles ? new Set(artifactFiles) : null;
   const tabsToClose = [];
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
       const input = tab.input;
       if (
         input instanceof vscode.TabInputText &&
-        isWorkspaceArtifactFile(rootPath, input.uri.fsPath)
+        isWorkspaceArtifactFile(rootPath, input.uri.fsPath) &&
+        (!allowedFiles || allowedFiles.has(input.uri.fsPath))
       ) {
         tabsToClose.push(tab);
       }
@@ -608,6 +689,28 @@ async function runTests(nodes) {
         });
         appendOutput(`\n$ make -C ${buildDir} --no-print-directory ${testNode.test.full_name}.result\n`);
 
+        const { failures: cleanupFailures } = removeArtifactFiles(
+          Object.values(artifactPathsForTest(provider.rootPath, testNode.project, testNode.test))
+        );
+        if (cleanupFailures.length) {
+          failures += 1;
+          appendOutput("Could not remove existing artifacts before rerun:\n");
+          for (const failure of cleanupFailures) {
+            appendOutput(`- ${failure}\n`);
+          }
+          ensureFailedRunArtifacts(
+            provider.rootPath,
+            testNode.project,
+            testNode.test,
+            [
+              "Run failed before execution because existing artifacts could not be removed.",
+              ...cleanupFailures.map((failure) => `- ${failure}`)
+            ].join("\n")
+          );
+          continue;
+        }
+
+        const runLog = [];
         const exitCode = await new Promise((resolve) => {
           const child = spawnStreaming(
             "make",
@@ -621,11 +724,25 @@ async function runTests(nodes) {
               cwd: provider.rootPath,
               env: makeEnv(provider.rootPath)
             },
-            (text) => appendOutput(text)
+            (text) => {
+              appendOutput(text);
+              runLog.push(text);
+            }
           );
           child.on("error", () => resolve(1));
           child.on("close", (code) => resolve(code ?? 1));
         });
+
+        if (exitCode !== 0) {
+          ensureFailedRunArtifacts(
+            provider.rootPath,
+            testNode.project,
+            testNode.test,
+            runLog.join("").trim()
+              ? runLog.join("")
+              : `make exited with ${exitCode}`
+          );
+        }
 
         provider.refresh();
         const refreshed = provider.buildTestNode(testNode.project, testNode.test);
@@ -772,34 +889,58 @@ async function debugTest(testNode) {
   }
 }
 
-async function clearChecksAndArtifacts() {
-  const closedTabCount = await closeOpenArtifactTabs(provider.rootPath);
-  const artifactFiles = findWorkspaceArtifactFiles(provider.rootPath);
-  let removedCount = 0;
-  const failures = [];
-
-  for (const filePath of artifactFiles) {
-    try {
-      fs.unlinkSync(filePath);
-      removedCount += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      failures.push(`${filePath}: ${message}`);
-    }
+async function clearCheckedArtifacts() {
+  const checked = await provider.getCheckedNodes();
+  if (!checked.length) {
+    vscode.window.showWarningMessage("Select at least one checked test to reset.");
+    return;
   }
+
+  const artifactFiles = findNodeArtifactFiles(checked);
+  const closedTabCount = await closeOpenArtifactTabs(provider.rootPath, artifactFiles);
+  const { removedCount, failures } = removeArtifactFiles(artifactFiles);
+
+  writeArtifactCleanupSummary({
+    closedTabCount,
+    removedCount,
+    failures,
+    scopeLabel: "Reset checked tests"
+  });
+  if (failures.length) {
+    outputChannel.show(true);
+  }
+
+  provider.clearCheckedNodes(checked);
+
+  if (failures.length) {
+    vscode.window.showWarningMessage(
+      `Reset checked tests, closed ${closedTabCount} artifact tab(s), and removed ${removedCount} artifact file(s), but ${failures.length} file(s) could not be deleted.`
+    );
+    return;
+  }
+
+  vscode.window.showInformationMessage(
+    removedCount > 0
+      ? `Reset checked tests and removed ${removedCount} artifact file(s).`
+      : closedTabCount > 0
+        ? `Reset checked tests and closed ${closedTabCount} artifact tab(s).`
+        : "Reset checked tests. No artifact files were found."
+  );
+}
+
+async function clearAllArtifacts() {
+  const artifactFiles = findWorkspaceArtifactFiles(provider.rootPath);
+  const closedTabCount = await closeOpenArtifactTabs(provider.rootPath);
+  const { removedCount, failures } = removeArtifactFiles(artifactFiles);
 
   outputChannel.clear();
-  if (removedCount > 0) {
-    outputChannel.appendLine(`Removed ${removedCount} artifact file(s).`);
-  }
-  if (closedTabCount > 0) {
-    outputChannel.appendLine(`Closed ${closedTabCount} open artifact tab(s).`);
-  }
+  writeArtifactCleanupSummary({
+    closedTabCount,
+    removedCount,
+    failures,
+    scopeLabel: "Reset all tests"
+  });
   if (failures.length) {
-    outputChannel.appendLine("Some artifacts could not be removed:");
-    for (const failure of failures) {
-      outputChannel.appendLine(`- ${failure}`);
-    }
     outputChannel.show(true);
   }
 
@@ -807,17 +948,17 @@ async function clearChecksAndArtifacts() {
 
   if (failures.length) {
     vscode.window.showWarningMessage(
-      `Cleared checks, closed ${closedTabCount} artifact tab(s), and removed ${removedCount} artifact file(s), but ${failures.length} file(s) could not be deleted.`
+      `Reset all tests, closed ${closedTabCount} artifact tab(s), and removed ${removedCount} artifact file(s), but ${failures.length} file(s) could not be deleted.`
     );
     return;
   }
 
   vscode.window.showInformationMessage(
     removedCount > 0
-      ? `Cleared checks, closed ${closedTabCount} artifact tab(s), and removed ${removedCount} artifact file(s).`
+      ? `Reset all tests and removed ${removedCount} artifact file(s).`
       : closedTabCount > 0
-        ? `Cleared checks and closed ${closedTabCount} artifact tab(s).`
-        : "Cleared checks. No artifact files were found."
+        ? `Reset all tests and closed ${closedTabCount} artifact tab(s).`
+        : "Reset all tests. No artifact files were found."
   );
 }
 
@@ -858,7 +999,7 @@ function activate(context) {
     treeDataProvider: provider,
     // Keep multi-run behavior in a single place: the tree checkboxes.
     canSelectMany: false,
-    showCollapseAll: true
+    showCollapseAll: false
   });
   syncSortModeState(context, initialSortMode);
 
@@ -879,6 +1020,11 @@ function activate(context) {
   }
 
   registerCommand(context, "pintosTests.refresh", () => provider.refresh());
+  registerCommand(context, "pintosTests.collapseAll", async () => {
+    await vscode.commands.executeCommand(
+      "workbench.actions.treeView.pintosTests.collapseAll"
+    );
+  });
   registerCommand(context, "pintosTests.toggleSortOrder", () => {
     const nextSortMode =
       provider.getSortMode() === SORT_MODE_RECENT
@@ -888,7 +1034,10 @@ function activate(context) {
     syncSortModeState(context, nextSortMode);
   });
   registerCommand(context, "pintosTests.clearChecked", async () => {
-    await clearChecksAndArtifacts();
+    await clearCheckedArtifacts();
+  });
+  registerCommand(context, "pintosTests.clearAll", async () => {
+    await clearAllArtifacts();
   });
   registerCommand(context, "pintosTests.runSelected", async () => {
     const checked = await provider.getCheckedNodes();

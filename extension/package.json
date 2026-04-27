@@ -2,7 +2,7 @@
   "name": "pintos-test-explorer",
   "displayName": "Pintos Test Explorer",
   "description": "Run and debug Pintos test cases from a dedicated VS Code sidebar",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "YoojinKoh",
   "license": "MIT",
   "icon": "media/extension_icon.png",
@@ -46,12 +46,15 @@
     "bundled/pintos-test-cli.py",
     "bundled/pintos-gdb-server.sh",
     "README.md",
+    "README.ko.md",
     "CHANGELOG.md",
     "LICENSE.txt",
     "SUPPORT.md",
     "media/extension_icon.png",
     "media/batch.svg",
     "media/clear.svg",
+    "media/clear-all.svg",
+    "media/collapse.svg",
     "media/debug.svg",
     "media/pintos.svg",
     "media/play.svg",
@@ -64,9 +67,11 @@
   "activationEvents": [
     "onView:pintosTests",
     "onCommand:pintosTests.refresh",
+    "onCommand:pintosTests.collapseAll",
     "onCommand:pintosTests.toggleSortOrder",
     "onCommand:pintosTests.runSelected",
     "onCommand:pintosTests.clearChecked",
+    "onCommand:pintosTests.clearAll",
     "onCommand:pintosTests.runProject",
     "onCommand:pintosTests.runTest",
     "onCommand:pintosTests.debugTest",
@@ -105,6 +110,15 @@
         }
       },
       {
+        "command": "pintosTests.collapseAll",
+        "title": "Collapse All",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/collapse.svg",
+          "dark": "media/collapse.svg"
+        }
+      },
+      {
         "command": "pintosTests.runSelected",
         "title": "Run Checked Tests",
         "category": "Pintos",
@@ -124,11 +138,20 @@
       },
       {
         "command": "pintosTests.clearChecked",
-        "title": "Clear Checks and Artifacts",
+        "title": "Reset Checked Tests",
         "category": "Pintos",
         "icon": {
           "light": "media/clear.svg",
           "dark": "media/clear.svg"
+        }
+      },
+      {
+        "command": "pintosTests.clearAll",
+        "title": "Reset All Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/clear-all.svg",
+          "dark": "media/clear-all.svg"
         }
       },
       {
@@ -167,24 +190,34 @@
     "menus": {
       "view/title": [
         {
-          "command": "pintosTests.refresh",
+          "command": "pintosTests.clearAll",
           "when": "view == pintosTests",
           "group": "navigation@1"
         },
         {
-          "command": "pintosTests.toggleSortOrder",
+          "command": "pintosTests.clearChecked",
           "when": "view == pintosTests",
           "group": "navigation@2"
         },
         {
-          "command": "pintosTests.clearChecked",
+          "command": "pintosTests.refresh",
           "when": "view == pintosTests",
           "group": "navigation@3"
         },
         {
-          "command": "pintosTests.runSelected",
+          "command": "pintosTests.toggleSortOrder",
           "when": "view == pintosTests",
           "group": "navigation@4"
+        },
+        {
+          "command": "pintosTests.collapseAll",
+          "when": "view == pintosTests",
+          "group": "navigation@5"
+        },
+        {
+          "command": "pintosTests.runSelected",
+          "when": "view == pintosTests",
+          "group": "navigation@6"
         }
       ],
       "view/item/context": [

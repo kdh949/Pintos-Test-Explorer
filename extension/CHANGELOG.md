@@ -1,9 +1,20 @@
 # Changelog
 
+## 0.1.7
+
+- Swapped the sort toggle to a gray funnel icon so the toolbar meaning is clearer at a glance.
+- Moved the red `Reset All Tests` action to the far left of the `Pintos Tests` toolbar and kept `Reset Checked Tests` as the scoped reset next to it.
+- Moved `Run Checked Tests` to the far right of the custom toolbar actions and replaced the built-in collapse control with an explicit toolbar button.
+- Marked build-time run failures as `FAIL` in both the VS Code tree and the companion CLI, even when Pintos never produced a normal `.result` file.
+- Added better debug startup diagnostics when port `1234` is already occupied before the GDB server starts.
+- Added packaged Korean README files and refreshed the public README, packaged README, and release notes so the shipped VSIX matches the current UI and CLI behavior.
+
 ## 0.1.6
 
 - Added the toolbar sort toggle to the published package so the `Pintos Tests` view can switch between `Number order` and `Latest first`.
-- Changed the trash button to reset checked tests and delete existing `output`, `result`, and `errors` artifact files from the Pintos build tree.
+- Split reset actions so checked tests can be reset without wiping the whole workspace, and kept a separate full reset action for all checks and artifacts.
+- Updated the toolbar ordering so the trash icon sits first, and replaced the sort artwork with a more recognizable sort glyph.
+- Added matching CLI reset commands for selected tests and whole-workspace cleanup, and made reruns delete old artifacts first so stale FAIL results are less likely to stick around.
 - Updated the Activity Bar `Pintos` icon so the `P` mark is filled for better visibility.
 - Rebuilt the packaged README and extension metadata so the shipped VSIX matches the current public documentation.
 
