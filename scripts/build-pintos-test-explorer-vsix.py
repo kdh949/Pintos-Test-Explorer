@@ -82,15 +82,15 @@ def manifest_xml(pkg: dict) -> str:
 
 CONTENT_TYPES_XML = """<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="json" ContentType="application/json" />
-  <Default Extension="js" ContentType="application/javascript" />
-  <Default Extension="md" ContentType="text/markdown" />
-  <Default Extension="png" ContentType="image/png" />
-  <Default Extension="py" ContentType="text/x-python" />
-  <Default Extension="sh" ContentType="application/x-sh" />
-  <Default Extension="svg" ContentType="image/svg+xml" />
-  <Default Extension="txt" ContentType="text/plain" />
-  <Default Extension="xml" ContentType="text/xml" />
+  <Default Extension=".js" ContentType="application/javascript" />
+  <Default Extension=".json" ContentType="application/json" />
+  <Default Extension=".md" ContentType="text/markdown" />
+  <Default Extension=".png" ContentType="image/png" />
+  <Default Extension=".py" ContentType="application/octet-stream" />
+  <Default Extension=".sh" ContentType="application/octet-stream" />
+  <Default Extension=".svg" ContentType="image/svg+xml" />
+  <Default Extension=".txt" ContentType="text/plain" />
+  <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
 """
 
