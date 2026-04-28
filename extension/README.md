@@ -2,157 +2,96 @@
 
 Languages: English | [한국어](README.ko.md)
 
-Run, debug, reset, and inspect Pintos test cases from a dedicated VS Code sidebar.
+Pintos Test Explorer adds a dedicated VS Code sidebar for Pintos tests and ships a matching CLI through `pt` and `pintos-tests`. The sidebar and CLI share the same bundled helper, so discovery, run/debug behavior, artifact handling, and root detection stay aligned.
 
-`Pintos Test Explorer` is a workspace-focused extension for common Pintos lab environments, including the `pintos_22.04_lab_docker` workflow. It shows the built-in Pintos test suites in a tree, lets you run one test or many tests without memorizing names, and starts GDB-backed debugging directly from the UI.
+## Quick Summary
 
-## Demo
+```text
+1. Read Pintos tests directly from Make.tests.
+2. Run, debug, reset, and inspect artifacts from VS Code or the terminal.
+3. Work from direct Pintos roots or wrapper layouts such as pintos_22.04_lab_docker.
+4. Ignore stale old group JSON so built-in folders like Alarm Clock keep their intended names.
+```
 
-[![Watch the demo video](https://img.youtube.com/vi/FyJ1jKg3zNk/hqdefault.jpg)](https://youtu.be/FyJ1jKg3zNk)
+```mermaid
+flowchart LR
+    A["Pintos View"] --> C["bundled pintos-test-cli.py"]
+    B["pt / pintos-tests"] --> C
+    C --> D["tests/*/Make.tests"]
+    C --> E["make / Pintos build tree"]
+    C --> F["output / result / errors artifacts"]
+```
 
-Watch the walkthrough: [YouTube demo video](https://youtu.be/FyJ1jKg3zNk)
+## Supported Layouts
 
-## Install
+The extension looks for a real Pintos root and supports:
 
-1. Open `Extensions` in VS Code.
-2. Search for `Pintos Test Explorer`.
-3. Click `Install`.
-4. If you are using a Dev Container, install it into the container.
-5. Run `Developer: Reload Window` once after installation.
+- the Pintos root itself
+- a wrapper repository that contains `pintos/`
+- a `src/` root
+- nested lab layouts such as `pintos_22.04_lab_docker`
 
-After installation, look for the `P os` icon in the Activity Bar.
+If needed, you can still point the CLI at the real root:
 
-## Quick Start
+```bash
+PINTOS_ROOT=/path/to/pintos pt list threads
+```
 
-1. Open the Pintos workspace in a Dev Container or Linux environment.
-2. Click the `P os` Activity Bar icon.
-3. Expand `Threads`, `User Programs`, `Virtual Memory`, or `File System`.
-4. Click the green `Run` button next to a test to execute it.
-5. Click the orange `Debug` button to start a GDB debug session for a single test.
-6. Check multiple tests and use `Run Checked Tests` from the view toolbar for batch execution.
-7. Use the toolbar sort button to switch between `Number order` and `Latest first`.
-8. Use the leftmost red `Reset All Tests` button to clear the whole workspace, or use `Reset Checked Tests` to reset only the selected tests.
+## After Installation
 
-When a test has artifacts, the tree shows quick links for `output`, `result`, and `errors`.
+1. Reload the window once.
+2. Open the `Pintos` activity-bar view.
+3. Expand a project and run or debug a test from its row.
+4. Check folders or tests and use `Run Checked Tests`.
+5. Open `output`, `result`, or `errors` artifacts directly from the tree.
 
-## Requirements
-
-- VS Code `1.85.0` or newer
-- A Pintos workspace in either of these layouts:
-  - `<workspace>/threads`, `<workspace>/userprog`, `<workspace>/vm`, `<workspace>/tests`
-  - `<workspace>/pintos/threads`, `<workspace>/pintos/userprog`, `<workspace>/pintos/vm`, `<workspace>/pintos/tests`
-- A Linux or Dev Container environment with `make`
-- `gdb` installed and available on your `PATH` for debug sessions
-- `ms-vscode.cpptools`
-
-This extension is designed for common Pintos lab workflows and is most reliable inside a matching Dev Container or Linux environment.
-
-## Features
-
-- Browse `threads`, `userprog`, `vm`, and `filesys` tests from a dedicated tree view
-- Run one test directly from its row
-- Debug one test with a GDB remote attach flow
-- Check multiple tests and run them as a batch
-- Toggle the tree between `Number order` and `Latest first`
-- Reset checked tests only, or clear every check and artifact from the toolbar
-- Mark build-time run failures as `FAIL` in the tree instead of leaving them as `Not run`
-- Open `output`, `result`, and `errors` files directly from the tree
-- Build the visible test list dynamically from `Make.tests`
-
-## Debugging Notes
-
-Debug sessions use the helper scripts bundled inside the extension together with VS Code C/C++ debugging. The extension passes your current Pintos workspace root into those helpers, so Marketplace installs do not depend on a matching `scripts/` directory in the repo checkout.
-
-The expected flow is:
-
-1. Start the Pintos GDB server for the selected test.
-2. Wait for the debug server to become ready.
-3. Attach `gdb` through `cppdbg`.
-4. Continue, step, inspect variables, and use breakpoints from the normal VS Code debug UI.
-
-If debug startup fails, open the `Pintos Tests` output channel first. The extension prints recent helper logs there, which usually show whether the problem is a missing `gdb`, a build failure, or a test command resolution issue.
-
-If a test run fails before Pintos can generate its normal artifacts, the extension now writes a synthetic `FAIL` result and keeps the captured build error in `errors` so the tree reflects the failure immediately.
-
-## Companion CLI
-
-This repository also includes a terminal-first companion CLI. The official command name is `pintos-tests`, and a shorter `pt` shortcut is available for day-to-day use. In the VS Code integrated terminal where the extension is active, both commands are exposed automatically. For other shells, install wrappers explicitly.
-
-`pt` and `pintos-tests` are interchangeable. They run the same CLI and accept the same subcommands and flags, so local terminals, scripts, and CI jobs can mix them freely.
-
-Inside the VS Code integrated terminal where the extension is installed, `pt` and `pintos-tests` are available automatically. Open a new integrated terminal after installing or reloading the extension, then run:
+After activation, a new integrated terminal should recognize:
 
 ```bash
 pt --help
+pintos-tests --help
 ```
 
-If you want the same commands in other shells too, run the Command Palette action `Pintos: Install CLI Wrappers to Shell`.
+If you want shell-wide wrappers outside VS Code, run `Pintos: Install CLI Wrappers to Shell`.
 
-Common selector examples:
+## Terminal Workflow
 
 ```bash
-# Reset one test or a project-wide selection
-pt reset threads alarm-zero
-pt reset threads all
-
-# Run tests 11 through 20
-pt run threads 11-20
-
-# Mix ranges, exact names, and patterns
-pt run threads 1 3-5 alarm-zero alarm-*
-
-# Reset the entire workspace
+pt projects
+pt list threads
+pt run threads alarm-zero
+pt debug vm 4 --server-only
+pt reset threads alarm-*
 pt reset-all
-
-# Run every filesys test
-pt run filesys all
-
-# Debug exactly one test by number
-pt debug threads 12
-
-# Show most recently used tests first
-pt list threads --recent-first
+pt artifacts threads alarm-zero
 ```
 
-Selector rules:
+## Selector Rules
 
-- `11-20` runs an inclusive numeric range.
+- `11-20` means an inclusive numeric range.
 - `alarm-zero` selects by exact short name.
 - `tests/threads/alarm-zero` also works.
 - `alarm-*` works as a wildcard pattern.
-- `all` selects every test for `run` and project-scoped `reset`.
-- `debug` must resolve to exactly one test.
+- `all` is supported by `run` and project-scoped `reset`.
+- `debug` and `artifacts` must resolve to exactly one test.
+- `--recent-first` reorders the list from local usage history.
 
-`--recent-first` uses your local run/debug history and moves the most recently used tests to the top of the list. The history is stored in `.vscode/pintos-test-history.json` inside the Pintos workspace.
+## Troubleshooting
 
-If you want `pintos-tests` and `pt` available from any terminal, run `Pintos: Install CLI Wrappers to Shell`.
+### A stale custom entry keeps breaking builds
 
-That installs small wrappers at `~/.local/bin/pintos-tests` and `~/.local/bin/pt`.
-It also adds `~/.local/bin` to your shell profile so the commands keep working in future shells.
-
-Examples after install:
+If a run on something unrelated such as `priority-change` still fails while compiling `tests/threads/custom/...`, the workspace likely has an old custom registration left behind:
 
 ```bash
-pt --help
-pt list threads
-pintos-tests debug vm 4 --server-only
+pt custom delete threads custom/new-test
 ```
 
-Automation-friendly commands:
+If the error mentions a missing dependency file such as `tests/threads/custom/new-test.d`, reload the latest VSIX and rerun once so the extension can recreate the matching build subdirectory before the next build.
 
-```bash
-pt list threads --json
-pt pick threads alarm-zero --single
-pintos-tests artifacts threads alarm-zero --json
-pt reset-all --json
-```
+### `Alarm Clock` still shows up as `New Group`
 
-If you are working from a source checkout of this repository itself, the repo-local helper scripts still work from the repository root:
+Old files such as `.vscode/pintos-test-explorer/groups/threads/new-group.json` are ignored by default in the current release. If you still see the old label, reload onto the latest VSIX. Deleting that stale JSON file is also safe.
 
-```bash
-source scripts/install-pintos-cli.sh
-```
+### Debug restart still feels stuck
 
-## License
-
-MIT. See [LICENSE.txt](LICENSE.txt).
+The current release routes VS Code `Restart` through the same debug-preparation path as the first launch. If old behavior persists, reload the window and confirm you are actually on the newest VSIX.

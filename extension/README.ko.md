@@ -2,156 +2,96 @@
 
 언어: [English](README.md) | 한국어
 
-전용 VS Code 사이드바에서 Pintos 테스트를 실행, 디버그, 초기화, 확인할 수 있게 해주는 확장입니다.
+Pintos Test Explorer는 Pintos 테스트 전용 VS Code 사이드바를 추가하고, 같은 기능을 `pt`와 `pintos-tests` CLI로도 함께 제공합니다. 사이드바와 CLI가 같은 bundled helper를 공유하므로 테스트 인식, 실행/디버그, artifact 처리, 루트 인식 규칙이 서로 어긋나지 않습니다.
 
-`Pintos Test Explorer`는 `pintos_22.04_lab_docker` 같은 일반적인 Pintos 실습 환경을 기준으로 만든 워크스페이스 중심 확장입니다. 기본 Pintos 테스트 목록을 트리로 보여주고, 이름을 외우지 않아도 한 개 또는 여러 개 테스트를 바로 실행할 수 있으며, GDB 기반 디버깅도 UI에서 시작할 수 있습니다.
+## 핵심 요약
 
-## 시연 영상
+```text
+1. Pintos 테스트를 Make.tests에서 직접 읽어옵니다.
+2. VS Code와 터미널에서 같은 규칙으로 run / debug / reset / artifact 확인을 합니다.
+3. 직접 Pintos 루트뿐 아니라 pintos_22.04_lab_docker 같은 wrapper 구조도 처리합니다.
+4. 오래된 group JSON을 기본적으로 무시해서 Alarm Clock 같은 기본 폴더명이 깨지지 않게 합니다.
+```
 
-[![시연 영상 보기](https://img.youtube.com/vi/FyJ1jKg3zNk/hqdefault.jpg)](https://youtu.be/FyJ1jKg3zNk)
+```mermaid
+flowchart LR
+    A["Pintos View"] --> C["bundled pintos-test-cli.py"]
+    B["pt / pintos-tests"] --> C
+    C --> D["tests/*/Make.tests"]
+    C --> E["make / Pintos build tree"]
+    C --> F["output / result / errors artifacts"]
+```
 
-바로 보기: [YouTube 시연 영상](https://youtu.be/FyJ1jKg3zNk)
+## 지원하는 구조
 
-## 설치
+확장은 실제 Pintos 루트를 찾으며 아래 구조를 지원합니다.
 
-1. VS Code에서 `Extensions`를 엽니다.
-2. `Pintos Test Explorer`를 검색합니다.
-3. `Install`을 누릅니다.
-4. Dev Container를 사용 중이면 컨테이너 안에도 설치합니다.
-5. 설치 후 한 번 `Developer: Reload Window`를 실행합니다.
+- Pintos 루트 자체
+- 내부에 `pintos/`가 들어 있는 wrapper 저장소
+- `src/` 루트
+- `pintos_22.04_lab_docker` 같은 nested lab 구조
 
-설치가 끝나면 Activity Bar에서 `P os` 아이콘을 확인할 수 있습니다.
+필요하면 CLI에서 실제 루트를 직접 지정할 수도 있습니다.
 
-## 빠른 시작
+```bash
+PINTOS_ROOT=/path/to/pintos pt list threads
+```
 
-1. Pintos 워크스페이스를 Dev Container나 Linux 환경에서 엽니다.
-2. `P os` Activity Bar 아이콘을 누릅니다.
-3. `Threads`, `User Programs`, `Virtual Memory`, `File System` 중 하나를 펼칩니다.
-4. 테스트 옆 초록색 `Run` 버튼으로 실행합니다.
-5. 주황색 `Debug` 버튼으로 단일 테스트 디버깅을 시작합니다.
-6. 여러 테스트를 체크한 뒤 툴바의 `Run Checked Tests`로 한 번에 실행합니다.
-7. 정렬 버튼으로 `Number order`와 `Latest first`를 전환합니다.
-8. 맨 왼쪽 빨간 `Reset All Tests`로 전체를 초기화하거나, `Reset Checked Tests`로 선택한 테스트만 초기화합니다.
+## 설치 후 사용
 
-아티팩트가 있는 테스트는 트리에서 `output`, `result`, `errors` 빠른 링크를 함께 표시합니다.
+1. 창을 한 번 다시 로드합니다.
+2. Activity Bar의 `Pintos` 뷰를 엽니다.
+3. 프로젝트를 펼쳐 테스트 행에서 바로 run 또는 debug 합니다.
+4. 폴더나 테스트를 체크한 뒤 `Run Checked Tests`를 사용합니다.
+5. 필요하면 트리에서 `output`, `result`, `errors` artifact를 바로 엽니다.
 
-## 요구 사항
-
-- VS Code `1.85.0` 이상
-- 아래 둘 중 하나 형태의 Pintos 워크스페이스
-  - `<workspace>/threads`, `<workspace>/userprog`, `<workspace>/vm`, `<workspace>/tests`
-  - `<workspace>/pintos/threads`, `<workspace>/pintos/userprog`, `<workspace>/pintos/vm`, `<workspace>/pintos/tests`
-- `make`가 가능한 Linux 또는 Dev Container 환경
-- 디버깅용 `gdb`
-- `ms-vscode.cpptools`
-
-이 확장은 전형적인 Pintos 실습 흐름을 대상으로 하며, 일치하는 Dev Container 또는 Linux 환경에서 가장 안정적으로 동작합니다.
-
-## 주요 기능
-
-- 전용 트리 뷰에서 `threads`, `userprog`, `vm`, `filesys` 테스트 탐색
-- 각 테스트 행에서 바로 단일 실행
-- GDB 원격 attach 기반 단일 디버깅
-- 체크박스로 여러 테스트를 묶어 한 번에 실행
-- `Number order`와 `Latest first` 정렬 전환
-- 툴바에서 선택 초기화와 전체 초기화 분리
-- 빌드 에러로 실행이 중단돼도 트리에서 `FAIL`로 바로 표시
-- `output`, `result`, `errors` 파일을 트리에서 바로 열기
-- `Make.tests`를 기준으로 테스트 목록 동적 생성
-
-## 디버깅 참고
-
-디버깅은 확장에 포함된 helper 스크립트와 VS Code C/C++ 디버거를 함께 사용합니다. 확장은 현재 Pintos 워크스페이스 루트를 helper에게 전달하므로, Marketplace로 설치한 경우에도 워크스페이스 안에 같은 `scripts/` 디렉터리가 있을 필요는 없습니다.
-
-기본 흐름은 다음과 같습니다.
-
-1. 선택한 테스트에 대해 Pintos GDB 서버를 시작합니다.
-2. 디버그 서버가 준비될 때까지 기다립니다.
-3. `cppdbg`를 통해 `gdb`를 attach합니다.
-4. 이후에는 일반 VS Code 디버그 UI에서 continue, step, breakpoint, variable inspection을 사용합니다.
-
-디버그 시작이 실패하면 먼저 `Pintos Tests` 출력 채널을 확인하세요. 최근 helper 로그가 함께 남기 때문에, `gdb` 누락인지, 빌드 실패인지, 테스트 명령 해석 문제인지 빠르게 구분할 수 있습니다.
-
-테스트가 Pintos 자체 아티팩트를 만들기 전에 실패하더라도, 확장은 synthetic `FAIL` 결과와 `errors` 내용을 남겨서 트리 상태가 바로 실패로 보이게 합니다.
-
-## Companion CLI
-
-이 저장소에는 같은 흐름을 터미널에서 쓸 수 있는 companion CLI도 포함되어 있습니다. 정식 명령 이름은 `pintos-tests`이고, 일상용 짧은 별칭으로 `pt`를 제공합니다. VS Code에서 확장이 활성화된 통합 터미널에서는 두 명령을 자동으로 쓸 수 있고, 그 밖의 셸에서는 래퍼 설치가 필요합니다.
-
-`pt`와 `pintos-tests`는 서로 바꿔 써도 됩니다. 같은 CLI를 가리키고, 같은 서브커맨드와 옵션을 받기 때문에 로컬 터미널, 스크립트, CI에서 자유롭게 섞어 사용할 수 있습니다.
-
-VS Code에서 이 확장이 설치된 통합 터미널에서는 `pt`와 `pintos-tests`를 자동으로 쓸 수 있습니다. 확장을 설치하거나 리로드한 뒤 새 통합 터미널을 열고 다음처럼 실행하세요.
+활성화 후 새 통합 터미널에서는 아래 명령이 보여야 합니다.
 
 ```bash
 pt --help
+pintos-tests --help
 ```
 
-다른 셸에서도 같은 명령을 쓰고 싶다면 Command Palette에서 `Pintos: Install CLI Wrappers to Shell`을 실행하면 됩니다.
+VS Code 밖에서도 계속 쓰고 싶다면 `Pintos: Install CLI Wrappers to Shell` 명령을 실행하세요.
 
-자주 쓰는 selector 예시:
+## 터미널 사용 예시
 
 ```bash
-# 하나 또는 여러 테스트 초기화
-pt reset threads alarm-zero
-pt reset threads all
-
-# 11번부터 20번까지 실행
-pt run threads 11-20
-
-# 범위, 정확한 이름, 패턴을 섞어서 실행
-pt run threads 1 3-5 alarm-zero alarm-*
-
-# 워크스페이스 전체 초기화
+pt projects
+pt list threads
+pt run threads alarm-zero
+pt debug vm 4 --server-only
+pt reset threads alarm-*
 pt reset-all
-
-# filesys 전체 실행
-pt run filesys all
-
-# 단일 테스트 디버깅
-pt debug threads 12
-
-# 최근 사용 우선 정렬
-pt list threads --recent-first
+pt artifacts threads alarm-zero
 ```
 
-selector 규칙:
+## Selector 규칙
 
 - `11-20`은 양끝 포함 숫자 범위입니다.
 - `alarm-zero`는 정확한 짧은 이름으로 선택합니다.
 - `tests/threads/alarm-zero` 형태도 사용할 수 있습니다.
 - `alarm-*`는 와일드카드 패턴입니다.
-- `all`은 `run`과 프로젝트 단위 `reset`에서 전체 테스트를 뜻합니다.
-- `debug`는 정확히 하나의 테스트로만 해석되어야 합니다.
+- `all`은 `run`과 프로젝트 단위 `reset`에서 지원합니다.
+- `debug`와 `artifacts`는 정확히 하나의 테스트여야 합니다.
+- `--recent-first`는 로컬 사용 기록을 기준으로 재정렬합니다.
 
-`--recent-first`는 로컬 run/debug 기록을 사용해 최근에 사용한 테스트를 위로 올립니다. 기록은 Pintos 워크스페이스의 `.vscode/pintos-test-history.json`에 저장됩니다.
+## 문제 해결
 
-어느 터미널에서나 `pintos-tests`와 `pt`를 쓰고 싶다면 Command Palette에서 `Pintos: Install CLI Wrappers to Shell`을 실행하세요.
+### stale custom entry 때문에 빌드가 계속 깨질 때
 
-이 명령은 `~/.local/bin/pintos-tests`와 `~/.local/bin/pt` 래퍼를 설치하고, 이후 셸에서도 계속 동작하도록 `~/.local/bin`을 셸 프로필에 추가합니다.
-
-설치 후 예시:
-
-```bash
-pt --help
-pt list threads
-pintos-tests debug vm 4 --server-only
-```
-
-자동화에 유용한 명령:
+`priority-change`처럼 다른 테스트를 돌렸는데도 `tests/threads/custom/...` 컴파일에서 계속 실패한다면, 워크스페이스에 예전 custom 등록이 남아 있을 가능성이 큽니다.
 
 ```bash
-pt list threads --json
-pt pick threads alarm-zero --single
-pintos-tests artifacts threads alarm-zero --json
-pt reset-all --json
+pt custom delete threads custom/new-test
 ```
 
-이 저장소 자체를 직접 clone해서 쓰는 경우에는, 저장소 루트에서 기존 helper 스크립트도 계속 사용할 수 있습니다.
+에러가 `tests/threads/custom/new-test.d` 같은 dependency file 누락으로 나온다면, 최신 VSIX로 다시 로드한 뒤 한 번 더 실행해서 확장이 대응되는 build 하위 폴더를 다시 만들게 해주세요.
 
-```bash
-source scripts/install-pintos-cli.sh
-```
+### `Alarm Clock`이 계속 `New Group`으로 보일 때
 
-## 라이선스
+`.vscode/pintos-test-explorer/groups/threads/new-group.json` 같은 오래된 파일은 현재 릴리스에서 기본적으로 무시됩니다. 그래도 예전 라벨이 보이면 최신 VSIX로 다시 로드하세요. 그 stale JSON 파일을 직접 지워도 안전합니다.
 
-MIT. 자세한 내용은 [LICENSE.txt](LICENSE.txt)를 참고하세요.
+### debug restart가 아직도 이상할 때
+
+현재 릴리스는 VS Code `Restart`도 최초 debug 시작과 같은 준비 경로로 처리합니다. 예전 동작이 계속 보이면 창을 다시 로드하고, 실제로 최신 VSIX가 설치되어 있는지 확인하세요.

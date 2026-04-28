@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import difflib
 import fnmatch
 import json
@@ -35,6 +36,21 @@ ROOT_LAYOUTS: tuple[tuple[str, ...], ...] = (
     ("src",),
     ("pintos", "src"),
 )
+DESCENDANT_ROOT_SEARCH_MAX_DEPTH = 4
+DESCENDANT_ROOT_IGNORED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".vscode",
+    ".idea",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "out",
+}
 
 
 def iter_root_candidates(base: Path) -> list[Path]:
@@ -49,6 +65,40 @@ def is_pintos_root(candidate: Path) -> bool:
         and (candidate / "vm" / "Make.vars").exists()
         and (candidate / "tests" / "Make.tests").exists()
     )
+
+
+def find_descendant_root(start: Path, *, max_depth: int = DESCENDANT_ROOT_SEARCH_MAX_DEPTH) -> Path | None:
+    queue: deque[tuple[Path, int]] = deque([(start.resolve(), 0)])
+    visited: set[Path] = set()
+
+    while queue:
+        current, depth = queue.popleft()
+        if current in visited:
+            continue
+        visited.add(current)
+
+        for root_candidate in iter_root_candidates(current):
+            if is_pintos_root(root_candidate):
+                return root_candidate
+
+        if depth >= max_depth:
+            continue
+
+        try:
+            children = sorted(current.iterdir(), key=lambda child: child.name)
+        except OSError:
+            continue
+
+        for child in children:
+            if not child.is_dir():
+                continue
+            if child.is_symlink():
+                continue
+            if child.name in DESCENDANT_ROOT_IGNORED_DIRS:
+                continue
+            queue.append((child, depth + 1))
+
+    return None
 
 
 def discover_repo_root() -> Path:
@@ -67,16 +117,22 @@ def discover_repo_root() -> Path:
             for root_candidate in iter_root_candidates(current):
                 if is_pintos_root(root_candidate):
                     return root_candidate
+        descendant_root = find_descendant_root(candidate)
+        if descendant_root is not None:
+            return descendant_root
 
     raise CliError(
         "Could not find a Pintos project root. "
-        "Open the repository root, the `pintos/` folder, the `src/` folder, "
+        "Open the Pintos root, a nested folder like `*/pintos/` or `*/pintos/src/`, "
         "or set PINTOS_ROOT."
     )
 
 
 GDB_SERVER_SCRIPT = Path(__file__).resolve().with_name("pintos-gdb-server.sh")
 ARTIFACT_KINDS = ("output", "result", "errors")
+BUILD_ERROR_RESULT = "BUILD_ERROR"
+CUSTOM_TESTS_DIR_NAME = "custom"
+CUSTOM_SCAFFOLD_MARKER_LINE = "# Added by Pintos Test Explorer"
 ROOT_DIR: Path | None = None
 UTILS_DIR: Path | None = None
 HISTORY_FILE: Path | None = None
@@ -139,6 +195,236 @@ def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
         ),
     }
 
+
+def normalize_custom_relative_path(value: str, *, require_custom_prefix: bool = True) -> str:
+    normalized = str(value or "").strip().replace("\\", "/").strip("/")
+    if normalized.lower().endswith(".c"):
+        normalized = normalized[:-2]
+    elif normalized.lower().endswith(".ck"):
+        normalized = normalized[:-3]
+
+    if not normalized:
+        raise CliError("Enter at least one file or folder name.")
+    parts = [part for part in normalized.split("/") if part]
+    if any(part == ".." for part in parts):
+        raise CliError("Parent directory segments are not allowed.")
+    if not all(re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in parts):
+        raise CliError("Use only letters, numbers, hyphens, underscores, and /.")
+    if require_custom_prefix and (parts[0] != CUSTOM_TESTS_DIR_NAME):
+        raise CliError(f"Custom paths must live under `{CUSTOM_TESTS_DIR_NAME}/...`.")
+    return "/".join(parts)
+
+
+def is_threads_project(meta: ProjectMeta) -> bool:
+    return meta.name == "threads"
+
+
+def custom_test_base_path(meta: ProjectMeta, relative_path: str) -> Path:
+    return ROOT_DIR / "tests" / meta.name / Path(relative_path)
+
+
+def custom_test_source_path(meta: ProjectMeta, relative_path: str) -> Path:
+    return custom_test_base_path(meta, relative_path).with_suffix(".c")
+
+
+def custom_test_checker_path(meta: ProjectMeta, relative_path: str) -> Path:
+    return custom_test_base_path(meta, relative_path).with_suffix(".ck")
+
+
+def custom_test_make_tests_path(meta: ProjectMeta) -> Path:
+    return ROOT_DIR / "tests" / meta.name / "Make.tests"
+
+
+def custom_test_full_name(meta: ProjectMeta, relative_path: str) -> str:
+    return f"tests/{meta.name}/{relative_path}"
+
+
+def custom_test_registration_lines(meta: ProjectMeta, relative_path: str) -> list[str]:
+    full_name = custom_test_full_name(meta, relative_path)
+    if is_threads_project(meta):
+        return [
+            f"tests/{meta.name}_TESTS += {full_name}",
+            f"tests/{meta.name}_SRC += {full_name}.c",
+        ]
+    return [
+        f"tests/{meta.name}_TESTS += {full_name}",
+        f"{full_name}_SRC = {full_name}.c",
+    ]
+
+
+def thread_test_function_name(relative_path: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", relative_path).strip("_")
+    return f"test_{normalized or 'custom'}"
+
+
+def render_thread_test_template(relative_path: str) -> str:
+    function_name = thread_test_function_name(relative_path)
+    return f"""/* TODO: describe this custom thread test. */
+
+#include "tests/threads/tests.h"
+
+void
+{function_name} (void)
+{{
+  pass ();
+}}
+"""
+
+
+def render_user_style_c_template(meta: ProjectMeta, relative_path: str) -> str:
+    label = relative_path.split("/")[-1]
+    return f"""/* TODO: describe this custom {meta.name} test. */
+
+#include "tests/lib.h"
+#include "tests/main.h"
+
+void
+test_main (void)
+{{
+  msg ("TODO: implement {label}");
+}}
+"""
+
+
+def render_user_style_checker_template() -> str:
+    return """# -*- perl -*-
+use strict;
+use warnings;
+use tests::tests;
+
+# TODO: tighten this checker with check_expected(), check_archive(), etc.
+pass;
+"""
+
+
+def is_managed_custom_test(meta: ProjectMeta, relative_path: str) -> bool:
+    make_tests_path = custom_test_make_tests_path(meta)
+    if not make_tests_path.exists():
+        return False
+    text = make_tests_path.read_text(encoding="utf-8")
+    return (
+        CUSTOM_SCAFFOLD_MARKER_LINE in text
+        and all(line in text for line in custom_test_registration_lines(meta, relative_path))
+    )
+
+
+def is_deletable_custom_test(meta: ProjectMeta, relative_path: str) -> bool:
+    return relative_path == CUSTOM_TESTS_DIR_NAME or relative_path.startswith(f"{CUSTOM_TESTS_DIR_NAME}/") or is_managed_custom_test(meta, relative_path)
+
+
+def has_partial_custom_definition(meta: ProjectMeta, relative_path: str) -> bool:
+    source_path = custom_test_source_path(meta, relative_path)
+    checker_path = custom_test_checker_path(meta, relative_path)
+    make_tests_path = custom_test_make_tests_path(meta)
+
+    if source_path.exists() or checker_path.exists():
+        return True
+
+    if make_tests_path.exists():
+        make_text = make_tests_path.read_text(encoding="utf-8")
+        if any(line in make_text for line in custom_test_registration_lines(meta, relative_path)):
+            return True
+
+    if is_threads_project(meta):
+        tests_h_path = ROOT_DIR / "tests" / "threads" / "tests.h"
+        tests_c_path = ROOT_DIR / "tests" / "threads" / "tests.c"
+        function_name = thread_test_function_name(relative_path)
+        if tests_h_path.exists() and f"void {function_name} (void);" in tests_h_path.read_text(encoding="utf-8"):
+            return True
+        if tests_c_path.exists() and f'"{relative_path}", {function_name}' in tests_c_path.read_text(encoding="utf-8"):
+            return True
+
+    return False
+
+
+def append_block_if_missing(file_path: Path, sentinel: str, block_text: str) -> bool:
+    text = file_path.read_text(encoding="utf-8")
+    if sentinel in text:
+        return False
+    prefix = text if text.endswith("\n") else f"{text}\n"
+    file_path.write_text(f"{prefix}{block_text.rstrip()}\n", encoding="utf-8")
+    return True
+
+
+def remove_exact_line_if_present(file_path: Path, line_text: str) -> bool:
+    if not file_path.exists():
+        return False
+    normalized_line = line_text.lstrip()
+    pattern = re.compile(rf"^[ \t]*{re.escape(normalized_line)}\r?\n?", re.MULTILINE)
+    text = file_path.read_text(encoding="utf-8")
+    if not pattern.search(text):
+        return False
+    file_path.write_text(re.sub(r"\n{3,}", "\n\n", pattern.sub("", text)), encoding="utf-8")
+    return True
+
+
+def remove_custom_test_from_make_tests(meta: ProjectMeta, relative_path: str) -> bool:
+    make_tests_path = custom_test_make_tests_path(meta)
+    if not make_tests_path.exists():
+        return False
+
+    lines = custom_test_registration_lines(meta, relative_path)
+    block_lines = [CUSTOM_SCAFFOLD_MARKER_LINE, *lines]
+    block_pattern = re.compile(
+        r"(?:^|\n)" + r"\n".join(re.escape(line) for line in block_lines) + r"\n?",
+        re.MULTILINE,
+    )
+    text = make_tests_path.read_text(encoding="utf-8")
+    changed = False
+
+    if block_pattern.search(text):
+        text = block_pattern.sub("\n", text, count=1)
+        changed = True
+
+    for line in lines:
+        pattern = re.compile(rf"^{re.escape(line)}\r?\n?", re.MULTILINE)
+        if pattern.search(text):
+            text = pattern.sub("", text)
+            changed = True
+
+    if changed:
+        make_tests_path.write_text(re.sub(r"\n{3,}", "\n\n", text), encoding="utf-8")
+    return changed
+
+
+def move_artifact_paths(meta: ProjectMeta, old_entry: TestEntry, new_entry: TestEntry) -> None:
+    old_paths = artifact_paths(meta, old_entry)
+    new_paths = artifact_paths(meta, new_entry)
+    for kind in ARTIFACT_KINDS:
+        old_path = old_paths[kind]
+        new_path = new_paths[kind]
+        if not old_path.exists():
+            continue
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        if new_path.exists():
+            new_path.unlink()
+        old_path.rename(new_path)
+
+
+def ensure_test_output_dirs(meta: ProjectMeta, entries: list[TestEntry]) -> None:
+    if not meta.build_dir.exists():
+        return
+
+    for entry in entries:
+        output_dir = meta.build_dir / Path(entry.full_name).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_registered_test_output_dirs(meta: ProjectMeta) -> None:
+    ensure_test_output_dirs(meta, parse_tests_from_makefiles(meta))
+
+
+def prune_empty_directories(start_dir: Path, stop_dir: Path) -> None:
+    current = start_dir.resolve()
+    stop = stop_dir.resolve()
+    while current != stop and stop in current.parents:
+        if not current.exists():
+            current = current.parent
+            continue
+        if current.exists() and any(current.iterdir()):
+            break
+        current.rmdir()
+        current = current.parent
 
 def ensure_runtime() -> None:
     global ROOT_DIR, UTILS_DIR, HISTORY_FILE, PROJECTS
@@ -222,6 +508,7 @@ def sort_entries_by_history(meta: ProjectMeta, entries: list[TestEntry], *, rece
 
 def ensure_build_tree(meta: ProjectMeta) -> None:
     if (meta.build_dir / "Makefile").exists():
+        ensure_registered_test_output_dirs(meta)
         return
     try:
         subprocess.run(
@@ -236,6 +523,7 @@ def ensure_build_tree(meta: ProjectMeta) -> None:
             f"Could not prepare the {meta.name} build directory. "
             f"`make -C {meta.project_dir}` failed."
         ) from exc
+    ensure_registered_test_output_dirs(meta)
 
 
 def read_make_logical_lines(path: Path) -> list[str]:
@@ -278,6 +566,30 @@ def split_top_level_args(text: str, expected_parts: int) -> list[str]:
     return parts
 
 
+def split_top_level_words(text: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+
+    for char in text.strip():
+        if char.isspace() and depth == 0:
+            if current:
+                parts.append("".join(current))
+                current = []
+            continue
+
+        current.append(char)
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+
+    if current:
+        parts.append("".join(current))
+
+    return parts
+
+
 def load_make_assignments(meta: ProjectMeta) -> dict[str, str]:
     assignments: dict[str, str] = {}
     test_dir = ROOT_DIR / "tests" / meta.name
@@ -296,12 +608,21 @@ def load_make_assignments(meta: ProjectMeta) -> dict[str, str]:
 
 
 def evaluate_make_expression(expr: str, assignments: dict[str, str]) -> list[str]:
-    expr = " ".join(expr.split())
+    expr = expr.strip()
     if not expr:
         return []
 
-    if expr.startswith("$(") and expr.endswith(")"):
-        inner = expr[2:-1].strip()
+    top_level_words = split_top_level_words(expr)
+    if len(top_level_words) > 1:
+        results: list[str] = []
+        for word in top_level_words:
+            results.extend(evaluate_make_expression(word, assignments))
+        return results
+
+    token = top_level_words[0] if top_level_words else expr
+
+    if token.startswith("$(") and token.endswith(")"):
+        inner = token[2:-1].strip()
         if inner.startswith("addprefix "):
             args = split_top_level_args(inner[len("addprefix ") :], 2)
             if len(args) != 2:
@@ -322,7 +643,7 @@ def evaluate_make_expression(expr: str, assignments: dict[str, str]) -> list[str
             return evaluate_make_expression(assignments[inner], assignments)
         return [inner]
 
-    return expr.split()
+    return [token]
 
 
 def parse_tests_from_makefiles(meta: ProjectMeta) -> list[TestEntry]:
@@ -659,7 +980,7 @@ def remove_artifact_paths(paths: list[Path]) -> tuple[int, list[str]]:
 def ensure_failed_run_artifacts(meta: ProjectMeta, entry: TestEntry, *, details: str) -> None:
     paths = artifact_paths(meta, entry)
     paths["result"].parent.mkdir(parents=True, exist_ok=True)
-    paths["result"].write_text("FAIL\n", encoding="utf-8")
+    paths["result"].write_text(f"{BUILD_ERROR_RESULT}\n", encoding="utf-8")
 
     if not paths["errors"].exists():
         text = details.strip() or "Run failed before Pintos could produce an errors artifact."
@@ -688,6 +1009,8 @@ def summarize_result(meta: ProjectMeta, entry: TestEntry) -> tuple[bool, str]:
     result_text = result_path.read_text(encoding="utf-8").strip()
     if result_text == "PASS":
         return True, "PASS"
+    if result_text == BUILD_ERROR_RESULT:
+        return False, "BUILD ERROR"
     if result_text == "FAIL":
         return False, "FAIL"
     return False, result_text or "unknown result"
@@ -706,6 +1029,304 @@ def print_artifacts(meta: ProjectMeta, entry: TestEntry, json_mode: bool) -> int
         if path:
             print(f"{kind:<6} {path}")
     return 0
+
+
+def ensure_custom_test_targets_available(meta: ProjectMeta, relative_path: str) -> None:
+    source_path = custom_test_source_path(meta, relative_path)
+    checker_path = custom_test_checker_path(meta, relative_path)
+    make_tests_path = custom_test_make_tests_path(meta)
+
+    if source_path.exists():
+        raise CliError(f"A test source file already exists at {source_path}")
+    if not is_threads_project(meta) and checker_path.exists():
+        raise CliError(f"A checker file already exists at {checker_path}")
+    if not make_tests_path.exists():
+        raise CliError(f"Could not find {make_tests_path}")
+
+    if is_threads_project(meta):
+        header_path = ROOT_DIR / "tests" / "threads" / "tests.h"
+        source_registry_path = ROOT_DIR / "tests" / "threads" / "tests.c"
+        if not header_path.exists():
+            raise CliError(f"Could not find {header_path}")
+        if not source_registry_path.exists():
+            raise CliError(f"Could not find {source_registry_path}")
+
+
+def register_custom_test_in_make_tests(meta: ProjectMeta, relative_path: str) -> None:
+    make_tests_path = custom_test_make_tests_path(meta)
+    block = "\n".join([CUSTOM_SCAFFOLD_MARKER_LINE, *custom_test_registration_lines(meta, relative_path)])
+    append_block_if_missing(make_tests_path, custom_test_full_name(meta, relative_path), block)
+
+
+def ensure_thread_prototype(relative_path: str) -> None:
+    header_path = ROOT_DIR / "tests" / "threads" / "tests.h"
+    function_name = thread_test_function_name(relative_path)
+    prototype = f"void {function_name} (void);"
+    text = header_path.read_text(encoding="utf-8")
+    if prototype in text:
+        return
+    endif_index = text.rfind("#endif")
+    if endif_index >= 0:
+        next_text = f"{text[:endif_index]}{prototype}\n{text[endif_index:]}"
+    else:
+        suffix = "" if text.endswith("\n") else "\n"
+        next_text = f"{text}{suffix}{prototype}\n"
+    header_path.write_text(next_text, encoding="utf-8")
+
+
+def ensure_thread_registration(relative_path: str) -> None:
+    source_path = ROOT_DIR / "tests" / "threads" / "tests.c"
+    function_name = thread_test_function_name(relative_path)
+    entry_text = f'{{"{relative_path}", {function_name}}}'
+    text = source_path.read_text(encoding="utf-8")
+    if entry_text in text:
+        return
+    array_start = text.find("static const struct test tests[]")
+    if array_start < 0:
+        raise CliError(f"Could not find the thread test registry in {source_path}.")
+    array_end = text.find("};", array_start)
+    if array_end < 0:
+        raise CliError(f"Could not find the end of the thread test registry in {source_path}.")
+    insertion = f'    {entry_text},\n'
+    source_path.write_text(f"{text[:array_end]}{insertion}{text[array_end:]}", encoding="utf-8")
+
+
+def replace_exact_text(file_path: Path, old: str, new: str) -> bool:
+    text = file_path.read_text(encoding="utf-8")
+    if old not in text:
+        return False
+    file_path.write_text(text.replace(old, new), encoding="utf-8")
+    return True
+
+
+def create_custom_test(meta: ProjectMeta, relative_path: str) -> dict[str, object]:
+    relative_path = normalize_custom_relative_path(relative_path)
+    ensure_custom_test_targets_available(meta, relative_path)
+
+    source_path = custom_test_source_path(meta, relative_path)
+    created_files = [str(source_path)]
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if is_threads_project(meta):
+        source_path.write_text(render_thread_test_template(relative_path), encoding="utf-8")
+        ensure_thread_prototype(relative_path)
+        ensure_thread_registration(relative_path)
+    else:
+        checker_path = custom_test_checker_path(meta, relative_path)
+        source_path.write_text(render_user_style_c_template(meta, relative_path), encoding="utf-8")
+        checker_path.write_text(render_user_style_checker_template(), encoding="utf-8")
+        created_files.append(str(checker_path))
+
+    register_custom_test_in_make_tests(meta, relative_path)
+    ensure_test_output_dirs(
+        meta,
+        [
+            TestEntry(
+                index=0,
+                full_name=custom_test_full_name(meta, relative_path),
+                short_name=relative_path,
+                group=relative_path.split("/", 1)[0] if "/" in relative_path else "main",
+            )
+        ],
+    )
+    return {
+        "action": "create",
+        "project": meta.name,
+        "target": relative_path,
+        "files": created_files,
+        "full_name": custom_test_full_name(meta, relative_path),
+    }
+
+
+def delete_custom_test_definition(meta: ProjectMeta, relative_path: str) -> dict[str, object]:
+    source_path = custom_test_source_path(meta, relative_path)
+    checker_path = custom_test_checker_path(meta, relative_path)
+    deleted_files: list[str] = []
+
+    if source_path.exists():
+        source_path.unlink()
+        deleted_files.append(str(source_path))
+    if not is_threads_project(meta) and checker_path.exists():
+        checker_path.unlink()
+        deleted_files.append(str(checker_path))
+
+    if is_threads_project(meta):
+        old_function_name = thread_test_function_name(relative_path)
+        remove_exact_line_if_present(ROOT_DIR / "tests" / "threads" / "tests.h", f"void {old_function_name} (void);")
+        remove_exact_line_if_present(ROOT_DIR / "tests" / "threads" / "tests.c", f'    {{"{relative_path}", {old_function_name}}},')
+
+    remove_custom_test_from_make_tests(meta, relative_path)
+
+    synthetic_entry = TestEntry(
+        index=0,
+        full_name=custom_test_full_name(meta, relative_path),
+        short_name=relative_path,
+        group=relative_path.split("/", 1)[0] if "/" in relative_path else "main",
+    )
+    for artifact_path in existing_artifact_paths(meta, synthetic_entry):
+        artifact_path.unlink()
+        deleted_files.append(str(artifact_path))
+
+    prune_empty_directories(source_path.parent, ROOT_DIR / "tests" / meta.name)
+    return {
+        "action": "delete-test",
+        "project": meta.name,
+        "target": relative_path,
+        "deleted_files": deleted_files,
+    }
+
+
+def rename_custom_test_definition(meta: ProjectMeta, old_relative_path: str, new_relative_path: str) -> dict[str, object]:
+    old_relative_path = normalize_custom_relative_path(old_relative_path, require_custom_prefix=False)
+    new_relative_path = normalize_custom_relative_path(new_relative_path)
+    if old_relative_path == new_relative_path:
+        raise CliError("The new path must be different from the current path.")
+
+    old_source_path = custom_test_source_path(meta, old_relative_path)
+    if not old_source_path.exists():
+        raise CliError(f"Could not find {old_source_path}")
+    ensure_custom_test_targets_available(meta, new_relative_path)
+
+    new_source_path = custom_test_source_path(meta, new_relative_path)
+    new_source_path.parent.mkdir(parents=True, exist_ok=True)
+    old_source_path.rename(new_source_path)
+
+    moved_files = [str(new_source_path)]
+
+    if is_threads_project(meta):
+        old_function = thread_test_function_name(old_relative_path)
+        new_function = thread_test_function_name(new_relative_path)
+        replace_exact_text(new_source_path, old_function, new_function)
+        replace_exact_text(ROOT_DIR / "tests" / "threads" / "tests.h", f"void {old_function} (void);", f"void {new_function} (void);")
+        replace_exact_text(ROOT_DIR / "tests" / "threads" / "tests.c", f'{{"{old_relative_path}", {old_function}}}', f'{{"{new_relative_path}", {new_function}}}')
+    else:
+        old_checker_path = custom_test_checker_path(meta, old_relative_path)
+        if old_checker_path.exists():
+            new_checker_path = custom_test_checker_path(meta, new_relative_path)
+            new_checker_path.parent.mkdir(parents=True, exist_ok=True)
+            old_checker_path.rename(new_checker_path)
+            moved_files.append(str(new_checker_path))
+
+    remove_custom_test_from_make_tests(meta, old_relative_path)
+    register_custom_test_in_make_tests(meta, new_relative_path)
+
+    old_entry = TestEntry(0, custom_test_full_name(meta, old_relative_path), old_relative_path, old_relative_path.split("/", 1)[0])
+    new_entry = TestEntry(0, custom_test_full_name(meta, new_relative_path), new_relative_path, new_relative_path.split("/", 1)[0])
+    ensure_test_output_dirs(meta, [new_entry])
+    move_artifact_paths(meta, old_entry, new_entry)
+
+    prune_empty_directories(old_source_path.parent, ROOT_DIR / "tests" / meta.name)
+
+    return {
+        "action": "rename-test",
+        "project": meta.name,
+        "old_target": old_relative_path,
+        "new_target": new_relative_path,
+        "files": moved_files,
+        "full_name": custom_test_full_name(meta, new_relative_path),
+    }
+
+
+def resolve_custom_target_entries(meta: ProjectMeta, target: str) -> tuple[str, list[TestEntry]]:
+    normalized = normalize_custom_relative_path(target, require_custom_prefix=False)
+    entries = fetch_tests(meta)
+    exact = [entry for entry in entries if entry.short_name == normalized and is_deletable_custom_test(meta, entry.short_name)]
+    if exact:
+        return normalized, exact
+
+    prefix = f"{normalized}/"
+    descendants = [
+        entry
+        for entry in entries
+        if entry.short_name.startswith(prefix) and is_deletable_custom_test(meta, entry.short_name)
+    ]
+    if descendants:
+        return normalized, descendants
+
+    if has_partial_custom_definition(meta, normalized):
+        return normalized, [
+            TestEntry(
+                index=0,
+                full_name=custom_test_full_name(meta, normalized),
+                short_name=normalized,
+                group=normalized.split("/", 1)[0] if "/" in normalized else "main",
+            )
+        ]
+
+    raise CliError(f"No custom test or folder matched '{target}'.")
+
+
+def delete_custom_target(meta: ProjectMeta, target: str) -> dict[str, object]:
+    normalized, entries = resolve_custom_target_entries(meta, target)
+    deleted_tests: list[str] = []
+    deleted_files: list[str] = []
+
+    for entry in sorted(entries, key=lambda item: len(item.short_name), reverse=True):
+        result = delete_custom_test_definition(meta, entry.short_name)
+        deleted_tests.append(entry.short_name)
+        deleted_files.extend(result["deleted_files"])
+
+    return {
+        "action": "delete",
+        "project": meta.name,
+        "target": normalized,
+        "deleted_tests": deleted_tests,
+        "deleted_files": deleted_files,
+    }
+
+
+def rename_custom_target(meta: ProjectMeta, old_target: str, new_target: str) -> dict[str, object]:
+    normalized_old, entries = resolve_custom_target_entries(meta, old_target)
+    normalized_new = normalize_custom_relative_path(new_target)
+
+    if normalized_old == normalized_new:
+        raise CliError("The new path must be different from the current path.")
+
+    if len(entries) == 1 and entries[0].short_name == normalized_old:
+        result = rename_custom_test_definition(meta, normalized_old, normalized_new)
+        return {
+            "action": "rename",
+            "project": meta.name,
+            "old_target": normalized_old,
+            "new_target": normalized_new,
+            "renamed_tests": [{"from": normalized_old, "to": normalized_new}],
+            "files": result["files"],
+        }
+
+    if normalized_new.startswith(f"{normalized_old}/"):
+        raise CliError("A folder cannot be renamed into one of its own descendants.")
+
+    planned: list[tuple[TestEntry, str]] = []
+    for entry in entries:
+        suffix = entry.short_name[len(normalized_old):].lstrip("/")
+        next_short_name = normalized_new if not suffix else f"{normalized_new}/{suffix}"
+        normalize_custom_relative_path(next_short_name)
+        planned.append((entry, next_short_name))
+
+    targets = {next_short_name for _entry, next_short_name in planned}
+    if len(targets) != len(planned):
+        raise CliError("The new folder name would produce duplicate test paths.")
+
+    entries_by_short_name = {entry.short_name for entry in fetch_tests(meta)}
+    for entry, next_short_name in planned:
+        if next_short_name != entry.short_name and next_short_name in entries_by_short_name:
+            raise CliError(f"Another test already exists at {next_short_name}.")
+
+    renamed_tests: list[dict[str, str]] = []
+    moved_files: list[str] = []
+    for entry, next_short_name in sorted(planned, key=lambda item: len(item[0].short_name), reverse=True):
+        result = rename_custom_test_definition(meta, entry.short_name, next_short_name)
+        renamed_tests.append({"from": entry.short_name, "to": next_short_name})
+        moved_files.extend(result["files"])
+
+    return {
+        "action": "rename",
+        "project": meta.name,
+        "old_target": normalized_old,
+        "new_target": normalized_new,
+        "renamed_tests": renamed_tests,
+        "files": moved_files,
+    }
 
 
 def reset_selected_tests(meta: ProjectMeta, entries: list[TestEntry], *, json_mode: bool) -> int:
@@ -819,7 +1440,7 @@ def run_selected_tests(meta: ProjectMeta, entries: list[TestEntry]) -> int:
         passed, status = summarize_result(meta, entry)
         if return_code != 0:
             passed = False
-            status = f"make exited with {return_code}"
+            status = "BUILD ERROR"
 
         if passed:
             print(f"PASS  {entry.short_name}", file=sys.stderr)
@@ -935,6 +1556,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  pintos-tests run filesys all\n"
             "  pintos-tests debug threads alarm-zero\n"
             "  pintos-tests debug vm 4 --server-only\n"
+            "  pintos-tests custom create threads custom/alarm/new-test\n"
+            "  pintos-tests custom rename threads custom/alarm custom/alarm-clock\n"
+            "  pintos-tests custom delete threads custom/alarm-clock\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -1001,6 +1625,25 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts_parser.add_argument("--json", action="store_true", help="Print as JSON")
     artifacts_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first")
 
+    custom_parser = subparsers.add_parser("custom", help="Manage custom test files and folders")
+    custom_subparsers = custom_parser.add_subparsers(dest="custom_command", required=True)
+
+    custom_create_parser = custom_subparsers.add_parser("create", help="Create a custom test case")
+    custom_create_parser.add_argument("project", choices=project_names)
+    custom_create_parser.add_argument("path", help="Relative custom test path, usually custom/<folder>/<name>")
+    custom_create_parser.add_argument("--json", action="store_true", help="Print as JSON")
+
+    custom_rename_parser = custom_subparsers.add_parser("rename", help="Rename a custom test or custom folder")
+    custom_rename_parser.add_argument("project", choices=project_names)
+    custom_rename_parser.add_argument("old_path", help="Current custom test or folder path")
+    custom_rename_parser.add_argument("new_path", help="New custom test or folder path")
+    custom_rename_parser.add_argument("--json", action="store_true", help="Print as JSON")
+
+    custom_delete_parser = custom_subparsers.add_parser("delete", help="Delete a custom test or custom folder")
+    custom_delete_parser.add_argument("project", choices=project_names)
+    custom_delete_parser.add_argument("path", help="Custom test or folder path to delete")
+    custom_delete_parser.add_argument("--json", action="store_true", help="Print as JSON")
+
     return parser
 
 
@@ -1015,6 +1658,24 @@ def main() -> int:
         if args.command == "reset-all":
             ensure_runtime()
             return reset_all_tests(json_mode=args.json)
+
+        if args.command == "custom":
+            ensure_runtime()
+            meta = PROJECTS[args.project]
+            if args.custom_command == "create":
+                payload = create_custom_test(meta, args.path)
+            elif args.custom_command == "rename":
+                payload = rename_custom_target(meta, args.old_path, args.new_path)
+            elif args.custom_command == "delete":
+                payload = delete_custom_target(meta, args.path)
+            else:
+                parser.error(f"Unknown custom command: {args.custom_command}")
+
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
 
         ensure_runtime()
         meta = PROJECTS[args.project]

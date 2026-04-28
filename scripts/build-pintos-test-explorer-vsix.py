@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from xml.sax.saxutils import escape
 import zipfile
 
@@ -23,6 +24,65 @@ def normalize_link(value) -> str:
     if isinstance(value, dict):
         return value.get("url", "")
     return value or ""
+
+
+def normalize_repository_web_url(value: str) -> str:
+    url = (value or "").strip()
+    if url.startswith("git+"):
+        url = url[4:]
+    if url.endswith(".git"):
+        url = url[:-4]
+    if url.startswith("git@github.com:"):
+        url = "https://github.com/" + url[len("git@github.com:") :]
+    return url.rstrip("/")
+
+
+def github_blob_base(pkg: dict) -> str | None:
+    repository_url = normalize_repository_web_url(normalize_link(pkg.get("repository")))
+    if not repository_url.startswith("https://github.com/"):
+        return None
+    branch = pkg.get("marketplaceGitHubBranch", "main")
+    return f"{repository_url}/blob/{branch}/extension"
+
+
+def github_raw_base(pkg: dict) -> str | None:
+    repository_url = normalize_repository_web_url(normalize_link(pkg.get("repository")))
+    prefix = "https://github.com/"
+    if not repository_url.startswith(prefix):
+        return None
+    repo_path = repository_url[len(prefix) :]
+    branch = pkg.get("marketplaceGitHubBranch", "main")
+    return f"https://raw.githubusercontent.com/{repo_path}/{branch}/extension"
+
+
+def is_relative_target(target: str) -> bool:
+    value = target.strip()
+    if not value or value.startswith("#") or value.startswith("/"):
+        return False
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", value):
+        return False
+    return True
+
+
+def rewrite_marketplace_markdown(text: str, pkg: dict) -> str:
+    blob_base = github_blob_base(pkg)
+    raw_base = github_raw_base(pkg)
+    if not blob_base:
+        return text
+
+    pattern = re.compile(r"(!?)\[([^\]]*)\]\(([^)]+)\)")
+
+    def replace(match: re.Match[str]) -> str:
+        bang, label, target = match.groups()
+        stripped_target = target.strip()
+        if not is_relative_target(stripped_target):
+            return match.group(0)
+
+        base = raw_base if bang and raw_base else blob_base
+        resolved_target = stripped_target.lstrip("./")
+        return f"{bang}[{label}]({base}/{resolved_target})"
+
+    return pattern.sub(replace, text)
 
 
 def manifest_xml(pkg: dict) -> str:
@@ -110,13 +170,24 @@ def archive_members(pkg: dict) -> list[tuple[Path, str]]:
     return members
 
 
+def member_bytes(source: Path, target: str, pkg: dict) -> bytes | None:
+    if source.name == "README.md" and target == "extension/readme.md":
+        text = source.read_text(encoding="utf-8")
+        return rewrite_marketplace_markdown(text, pkg).encode("utf-8")
+    return None
+
+
 def build_vsix(output_path: Path, pkg: dict) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("extension.vsixmanifest", manifest_xml(pkg))
         archive.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
         for source, target in archive_members(pkg):
-            archive.write(source, target)
+            payload = member_bytes(source, target, pkg)
+            if payload is None:
+                archive.write(source, target)
+            else:
+                archive.writestr(target, payload)
 
 
 def main() -> int:

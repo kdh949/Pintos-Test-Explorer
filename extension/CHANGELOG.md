@@ -1,9 +1,21 @@
 # Changelog
 
+## 0.2.1
+
+- Fixed `Make.tests` parsing for mixed expressions such as `$(addprefix ...)` plus later `+=` entries, which restores correct discovery in wrapper workspaces like `pintos_22.04_lab_docker`.
+- Ignored stale legacy group JSON files such as `new-group.json` by default so built-in folders like `Alarm Clock` are no longer renamed unexpectedly.
+- Routed custom create, rename, and delete flows through the bundled CLI, and now recreate matching build output directories for custom paths to reduce `tests/.../custom/*.d` build failures.
+- Routed Pintos debug restarts through the same launch-preparation path as first-time debug starts.
+- Kept detailed compiler output in the `errors` artifact while removing the extra `Build error` text from test and aggregate row descriptions.
+- Replaced the long create-test toolbar label with a dedicated gray icon button positioned next to the sort funnel.
+
 ## 0.2.0
 
-- Refreshed the public English and Korean README files with the demo video, a fuller CLI command reference, selector rules, artifact notes, and clearer CI guidance for mixing `pt` and `pintos-tests`.
-- Packaged the current companion CLI/runtime improvements into a new VSIX release, including integrated-terminal CLI availability, installable shell wrappers, broader Pintos root discovery, and more portable Python/bash/gdb resolution.
+- Shipped the integrated companion CLI so new VS Code terminals can use `pt` and `pintos-tests` without extra workspace-local setup.
+- Added installable shell wrappers for non-VS-Code terminals and bundled dedicated launcher scripts into the packaged extension.
+- Expanded Pintos root discovery across direct roots, `pintos/`, `src/`, and nested wrapper layouts.
+- Hardened helper runtime resolution so Python, bash, and gdb are resolved from the active environment instead of one fixed path.
+- Refreshed packaged documentation and release metadata around terminal usage, selector rules, artifacts, and mixed `pt` / `pintos-tests` workflows.
 
 ## 0.1.9
 

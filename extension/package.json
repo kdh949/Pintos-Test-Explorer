@@ -2,7 +2,7 @@
   "name": "pintos-test-explorer",
   "displayName": "Pintos Test Explorer",
   "description": "Run and debug Pintos test cases from a dedicated VS Code sidebar",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "YoojinKoh",
   "license": "MIT",
   "icon": "media/extension_icon.png",
@@ -57,6 +57,7 @@
     "media/clear.svg",
     "media/clear-all.svg",
     "media/collapse.svg",
+    "media/create-test.svg",
     "media/debug.svg",
     "media/pintos.svg",
     "media/play.svg",
@@ -69,6 +70,8 @@
   "activationEvents": [
     "workspaceContains:tests/Make.tests",
     "workspaceContains:pintos/tests/Make.tests",
+    "workspaceContains:**/tests/Make.tests",
+    "workspaceContains:**/pintos/tests/Make.tests",
     "onView:pintosTests",
     "onCommand:pintosTests.refresh",
     "onCommand:pintosTests.collapseAll",
@@ -77,8 +80,12 @@
     "onCommand:pintosTests.clearChecked",
     "onCommand:pintosTests.clearAll",
     "onCommand:pintosTests.runProject",
+    "onCommand:pintosTests.runGroup",
     "onCommand:pintosTests.runTest",
     "onCommand:pintosTests.debugTest",
+    "onCommand:pintosTests.createCustomTestCase",
+    "onCommand:pintosTests.renameCustomTest",
+    "onCommand:pintosTests.deleteCustomTest",
     "onCommand:pintosTests.installCliWrappers",
     "onCommand:pintosTests.openArtifact"
   ],
@@ -169,6 +176,11 @@
         }
       },
       {
+        "command": "pintosTests.runGroup",
+        "title": "Run Folder Tests",
+        "category": "Pintos"
+      },
+      {
         "command": "pintosTests.runTest",
         "title": "Run Test",
         "category": "Pintos",
@@ -185,6 +197,25 @@
           "light": "media/debug.svg",
           "dark": "media/debug.svg"
         }
+      },
+      {
+        "command": "pintosTests.createCustomTestCase",
+        "title": "Create Test",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/create-test.svg",
+          "dark": "media/create-test.svg"
+        }
+      },
+      {
+        "command": "pintosTests.renameCustomTest",
+        "title": "Rename Custom Test or Folder",
+        "category": "Pintos"
+      },
+      {
+        "command": "pintosTests.deleteCustomTest",
+        "title": "Delete Custom Test or Folder",
+        "category": "Pintos"
       },
       {
         "command": "pintosTests.installCliWrappers",
@@ -220,21 +251,81 @@
           "group": "navigation@4"
         },
         {
-          "command": "pintosTests.collapseAll",
+          "command": "pintosTests.createCustomTestCase",
           "when": "view == pintosTests",
           "group": "navigation@5"
         },
         {
-          "command": "pintosTests.runSelected",
+          "command": "pintosTests.collapseAll",
           "when": "view == pintosTests",
           "group": "navigation@6"
+        },
+        {
+          "command": "pintosTests.runSelected",
+          "when": "view == pintosTests",
+          "group": "navigation@7"
         }
       ],
       "view/item/context": [
         {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests && viewItem == pintosProject",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests && viewItem == pintosGroup",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests && viewItem == pintosTest",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "group": "navigation@1"
+        },
+        {
           "command": "pintosTests.runProject",
           "when": "view == pintosTests && viewItem == pintosProject",
-          "group": "inline@1"
+          "group": "navigation@2"
+        },
+        {
+          "command": "pintosTests.runGroup",
+          "when": "view == pintosTests && viewItem == pintosGroup",
+          "group": "navigation@2"
+        },
+        {
+          "command": "pintosTests.runGroup",
+          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "group": "navigation@2"
+        },
+        {
+          "command": "pintosTests.renameCustomTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "group": "navigation@3"
+        },
+        {
+          "command": "pintosTests.renameCustomTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "group": "navigation@3"
+        },
+        {
+          "command": "pintosTests.deleteCustomTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "group": "navigation@4"
+        },
+        {
+          "command": "pintosTests.deleteCustomTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "group": "navigation@4"
         },
         {
           "command": "pintosTests.debugTest",
@@ -242,8 +333,18 @@
           "group": "inline@1"
         },
         {
+          "command": "pintosTests.debugTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "group": "inline@1"
+        },
+        {
           "command": "pintosTests.runTest",
           "when": "view == pintosTests && viewItem == pintosTest",
+          "group": "inline@2"
+        },
+        {
+          "command": "pintosTests.runTest",
+          "when": "view == pintosTests && viewItem == pintosCustomTest",
           "group": "inline@2"
         }
       ]
