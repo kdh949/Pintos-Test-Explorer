@@ -77,6 +77,9 @@
     "onCommand:pintosTests.refresh",
     "onCommand:pintosTests.collapseAll",
     "onCommand:pintosTests.toggleSortOrder",
+    "onCommand:pintosTests.toggleResultFilter",
+    "onCommand:pintosTests.searchTests",
+    "onCommand:pintosTests.clearSearch",
     "onCommand:pintosTests.runSelected",
     "onCommand:pintosTests.clearChecked",
     "onCommand:pintosTests.clearAll",
@@ -145,6 +148,33 @@
         "icon": {
           "light": "media/range.svg",
           "dark": "media/range.svg"
+        }
+      },
+      {
+        "command": "pintosTests.toggleResultFilter",
+        "title": "Toggle Result Filter",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/range.svg",
+          "dark": "media/range.svg"
+        }
+      },
+      {
+        "command": "pintosTests.searchTests",
+        "title": "Search Tests",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/open-file.svg",
+          "dark": "media/open-file.svg"
+        }
+      },
+      {
+        "command": "pintosTests.clearSearch",
+        "title": "Clear Test Search",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/clear.svg",
+          "dark": "media/clear.svg"
         }
       },
       {
@@ -236,6 +266,17 @@
         "category": "Pintos"
       }
     ],
+    "configuration": {
+      "title": "Pintos Test Explorer",
+      "properties": {
+        "pintosTests.maxParallelTests": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum number of Pintos tests to run in parallel after the project build step."
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -259,19 +300,34 @@
           "group": "navigation@4"
         },
         {
-          "command": "pintosTests.createCustomTestCase",
+          "command": "pintosTests.toggleResultFilter",
           "when": "view == pintosTests",
           "group": "navigation@5"
         },
         {
-          "command": "pintosTests.collapseAll",
+          "command": "pintosTests.searchTests",
           "when": "view == pintosTests",
           "group": "navigation@6"
         },
         {
+          "command": "pintosTests.clearSearch",
+          "when": "view == pintosTests && pintosTests.searchActive",
+          "group": "navigation@7"
+        },
+        {
+          "command": "pintosTests.createCustomTestCase",
+          "when": "view == pintosTests",
+          "group": "navigation@8"
+        },
+        {
+          "command": "pintosTests.collapseAll",
+          "when": "view == pintosTests",
+          "group": "navigation@9"
+        },
+        {
           "command": "pintosTests.runSelected",
           "when": "view == pintosTests",
-          "group": "navigation@7"
+          "group": "navigation@10"
         }
       ],
       "view/item/context": [

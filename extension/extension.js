@@ -42,6 +42,13 @@ const SORT_MODE_NUMBER = "number";
 const SORT_MODE_RECENT = "recent";
 const DEFAULT_SORT_MODE = SORT_MODE_NUMBER;
 const SORT_MODE_STATE_KEY = "pintosTests.sortMode";
+const RESULT_FILTER_ALL = "all";
+const RESULT_FILTER_PASSED = "passed";
+const RESULT_FILTER_NOT_PASSED = "notPassed";
+const DEFAULT_RESULT_FILTER = RESULT_FILTER_ALL;
+const RESULT_FILTER_STATE_KEY = "pintosTests.resultFilter";
+const SEARCH_ACTIVE_STATE_KEY = "pintosTests.searchActive";
+const DEFAULT_PARALLEL_TEST_JOBS = 4;
 const PINTOS_ROOT_LAYOUTS = [
   [],
   ["pintos"],
@@ -146,7 +153,11 @@ class ArtifactNode {
 }
 
 class PintosTreeProvider {
-  constructor(rootPath, sortMode = DEFAULT_SORT_MODE) {
+  constructor(
+    rootPath,
+    sortMode = DEFAULT_SORT_MODE,
+    resultFilter = DEFAULT_RESULT_FILTER
+  ) {
     this.rootPath = rootPath;
     this._onDidChangeTreeData = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -162,6 +173,8 @@ class PintosTreeProvider {
     this.cacheGeneration = 0;
     this.nextCheckboxUpdateId = 0;
     this.sortMode = normalizeSortMode(sortMode);
+    this.resultFilter = normalizeResultFilter(resultFilter);
+    this.searchQuery = "";
   }
 
   refresh(options = {}) {
@@ -198,6 +211,34 @@ class PintosTreeProvider {
     }
     this.sortMode = nextSortMode;
     this.refresh();
+    return true;
+  }
+
+  getResultFilter() {
+    return this.resultFilter;
+  }
+
+  setResultFilter(resultFilter) {
+    const nextResultFilter = normalizeResultFilter(resultFilter);
+    if (this.resultFilter === nextResultFilter) {
+      return false;
+    }
+    this.resultFilter = nextResultFilter;
+    this.refreshView();
+    return true;
+  }
+
+  getSearchQuery() {
+    return this.searchQuery;
+  }
+
+  setSearchQuery(searchQuery) {
+    const nextSearchQuery = normalizeSearchQuery(searchQuery);
+    if (this.searchQuery === nextSearchQuery) {
+      return false;
+    }
+    this.searchQuery = nextSearchQuery;
+    this.refreshView();
     return true;
   }
 
@@ -322,7 +363,7 @@ class PintosTreeProvider {
   }
 
   async setCheckedForNode(node, checked) {
-    const testNodes = await this.getDescendantTestNodes(node);
+    const testNodes = await this.getDescendantTestNodes(node, { visibleOnly: true });
     let changed = false;
     for (const testNode of testNodes) {
       changed = this.setChecked(testNode, checked) || changed;
@@ -357,6 +398,18 @@ class PintosTreeProvider {
       }
     }
     return selected;
+  }
+
+  filterTestNodes(nodes) {
+    return nodes.filter((node) =>
+      matchesResultFilter(node, this.resultFilter) &&
+      matchesSearchQuery(node, this.searchQuery)
+    );
+  }
+
+  async getVisibleTestNodesForProject(project) {
+    const testNodes = await this.getTestNodesForProject(project);
+    return this.filterTestNodes(testNodes);
   }
 
   summarizeTestNodes(nodes) {
@@ -475,7 +528,7 @@ class PintosTreeProvider {
       const projects = await Promise.all(
         PROJECT_ORDER.map(async (key) => {
           const project = PROJECTS[key];
-          const nodes = await this.getTestNodesForProject(project);
+          const nodes = await this.getVisibleTestNodesForProject(project);
           return new ProjectNode(project, this.summarizeTestNodes(nodes));
         })
       );
@@ -483,12 +536,12 @@ class PintosTreeProvider {
     }
 
     if (element.nodeType === "project") {
-      const testNodes = await this.getTestNodesForProject(element.project);
+      const testNodes = await this.getVisibleTestNodesForProject(element.project);
       return this.buildGroupChildren(element.project, [], testNodes);
     }
 
     if (element.nodeType === "group") {
-      const testNodes = await this.getTestNodesForProject(element.project);
+      const testNodes = await this.getVisibleTestNodesForProject(element.project);
       return this.buildGroupChildren(element.project, element.groupSegments, testNodes);
     }
 
@@ -534,7 +587,7 @@ class PintosTreeProvider {
     return groups;
   }
 
-  async getDescendantTestNodes(node) {
+  async getDescendantTestNodes(node, options = {}) {
     if (!node) {
       return [];
     }
@@ -545,7 +598,9 @@ class PintosTreeProvider {
       return [];
     }
 
-    const testNodes = await this.getTestNodesForProject(node.project);
+    const testNodes = options.visibleOnly
+      ? await this.getVisibleTestNodesForProject(node.project)
+      : await this.getTestNodesForProject(node.project);
     if (node.nodeType === "project") {
       return testNodes;
     }
@@ -707,6 +762,58 @@ function normalizeSortMode(sortMode) {
 
 function sortModeLabel(sortMode) {
   return sortMode === SORT_MODE_RECENT ? "Latest first" : "Number order";
+}
+
+function normalizeResultFilter(resultFilter) {
+  return [RESULT_FILTER_PASSED, RESULT_FILTER_NOT_PASSED].includes(resultFilter)
+    ? resultFilter
+    : RESULT_FILTER_ALL;
+}
+
+function nextResultFilter(resultFilter) {
+  if (resultFilter === RESULT_FILTER_ALL) {
+    return RESULT_FILTER_PASSED;
+  }
+  if (resultFilter === RESULT_FILTER_PASSED) {
+    return RESULT_FILTER_NOT_PASSED;
+  }
+  return RESULT_FILTER_ALL;
+}
+
+function resultFilterLabel(resultFilter) {
+  if (resultFilter === RESULT_FILTER_PASSED) {
+    return "Passed";
+  }
+  if (resultFilter === RESULT_FILTER_NOT_PASSED) {
+    return "Not passed";
+  }
+  return "All results";
+}
+
+function normalizeSearchQuery(searchQuery) {
+  return String(searchQuery || "").trim();
+}
+
+function matchesResultFilter(testNode, resultFilter) {
+  if (resultFilter === RESULT_FILTER_PASSED) {
+    return testNode.status === "pass";
+  }
+  if (resultFilter === RESULT_FILTER_NOT_PASSED) {
+    return testNode.status === "fail" || testNode.status === "build_error";
+  }
+  return true;
+}
+
+function matchesSearchQuery(testNode, searchQuery) {
+  const query = normalizeSearchQuery(searchQuery).toLowerCase();
+  if (!query) {
+    return true;
+  }
+  return [
+    testNode.test.short_name,
+    testNode.test.full_name,
+    testLeafName(testNode.test)
+  ].some((value) => String(value || "").toLowerCase().includes(query));
 }
 
 function isArtifactFile(filePath) {
@@ -1905,6 +2012,24 @@ async function ensureProjectBuildTree(project) {
     ensureProjectBuildDirectories(provider.rootPath, project);
     const tests = await provider.getTestsForProject(project);
     ensureTestBuildOutputDirectories(provider.rootPath, project, tests);
+    return false;
+  }
+
+  const projectDir = path.join(provider.rootPath, ...project.projectDir);
+  appendOutput(`\n$ make -C ${projectDir}\n`);
+  await execFileCapture("make", ["-C", projectDir], {
+    cwd: provider.rootPath,
+    env: makeEnv(provider.rootPath)
+  });
+  ensureProjectBuildDirectories(provider.rootPath, project);
+  const tests = await provider.getTestsForProject(project);
+  ensureTestBuildOutputDirectories(provider.rootPath, project, tests);
+  return true;
+}
+
+async function prepareProjectForTestRun(project, testCount) {
+  const builtDuringPreparation = await ensureProjectBuildTree(project);
+  if (testCount <= 1 || builtDuringPreparation) {
     return;
   }
 
@@ -1919,27 +2044,139 @@ async function ensureProjectBuildTree(project) {
   ensureTestBuildOutputDirectories(provider.rootPath, project, tests);
 }
 
+function configuredParallelTestJobs() {
+  const configured = vscode.workspace
+    .getConfiguration("pintosTests")
+    .get("maxParallelTests", DEFAULT_PARALLEL_TEST_JOBS);
+  const numeric = Number(configured);
+  if (!Number.isFinite(numeric) || numeric < 1) {
+    return DEFAULT_PARALLEL_TEST_JOBS;
+  }
+  return Math.floor(numeric);
+}
+
+async function runWithConcurrency(items, concurrency, worker) {
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  let nextIndex = 0;
+  const results = new Array(items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await worker(items[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+async function runSingleTestNode(testNode, runContext) {
+  const { index, total, progress, streamOutput } = runContext;
+  const label = `${testNode.project.key}/${testNode.test.short_name}`;
+  const buildDir = path.join(provider.rootPath, ...testNode.project.buildDir);
+
+  progress.report({
+    message: `[${index + 1}/${total}] ${label}`,
+    increment: Math.round(100 / total)
+  });
+  appendOutput(`\n$ make -C ${buildDir} --no-print-directory ${testNode.test.full_name}.result\n`);
+
+  const { failures: cleanupFailures } = removeArtifactFiles(
+    Object.values(artifactPathsForTest(provider.rootPath, testNode.project, testNode.test))
+  );
+  if (cleanupFailures.length) {
+    appendOutput("Could not remove existing artifacts before rerun:\n");
+    for (const failure of cleanupFailures) {
+      appendOutput(`- ${failure}\n`);
+    }
+    ensureFailedRunArtifacts(
+      provider.rootPath,
+      testNode.project,
+      testNode.test,
+      [
+        "Run failed before execution because existing artifacts could not be removed.",
+        ...cleanupFailures.map((failure) => `- ${failure}`)
+      ].join("\n")
+    );
+    provider.refresh();
+    return false;
+  }
+
+  const runLog = [];
+  const exitCode = await new Promise((resolve) => {
+    const child = spawnStreaming(
+      "make",
+      [
+        "-C",
+        buildDir,
+        "--no-print-directory",
+        `${testNode.test.full_name}.result`
+      ],
+      {
+        cwd: provider.rootPath,
+        env: makeEnv(provider.rootPath)
+      },
+      (text) => {
+        if (streamOutput) {
+          appendOutput(text);
+        }
+        runLog.push(text);
+      }
+    );
+    child.on("error", () => resolve(1));
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+
+  if (!streamOutput && runLog.length) {
+    appendOutput(runLog.join(""));
+  }
+
+  if (exitCode !== 0) {
+    ensureFailedRunArtifacts(
+      provider.rootPath,
+      testNode.project,
+      testNode.test,
+      runLog.join("").trim()
+        ? runLog.join("")
+        : `make exited with ${exitCode}`
+    );
+  }
+
+  provider.refresh();
+  const refreshed = provider.buildTestNode(testNode.project, testNode.test);
+  return exitCode === 0 && refreshed.status === "pass";
+}
+
 async function runTests(nodes) {
   const tests = normalizeTestSelection(nodes);
   if (!tests.length) {
-    vscode.window.showWarningMessage("Select at least one checked test.");
+    vscode.window.showWarningMessage("Select at least one test.");
     return;
   }
 
   outputChannel.show(true);
   appendOutput(`\n=== Running ${tests.length} Pintos test(s) ===\n`);
-  const testsByProject = new Map();
+  const testNodesByProject = new Map();
   for (const testNode of tests) {
-    const current = testsByProject.get(testNode.project.key) || [];
-    current.push(testNode.test);
-    testsByProject.set(testNode.project.key, current);
+    const current = testNodesByProject.get(testNode.project.key) || [];
+    current.push(testNode);
+    testNodesByProject.set(testNode.project.key, current);
   }
-  for (const [projectKey, projectTests] of testsByProject.entries()) {
-    recordHistory(provider.rootPath, PROJECTS[projectKey], projectTests, "run");
+  for (const [projectKey, projectTestNodes] of testNodesByProject.entries()) {
+    recordHistory(
+      provider.rootPath,
+      PROJECTS[projectKey],
+      projectTestNodes.map((testNode) => testNode.test),
+      "run"
+    );
   }
 
   let failures = 0;
-  const buildPreparationErrors = new Map();
+  const maxJobs = Math.min(configuredParallelTestJobs(), tests.length);
+  appendOutput(`Using up to ${maxJobs} parallel test job(s).\n`);
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -1947,100 +2184,43 @@ async function runTests(nodes) {
       cancellable: false
     },
     async (progress) => {
-      for (let index = 0; index < tests.length; index += 1) {
-        const testNode = tests[index];
-        const label = `${testNode.project.key}/${testNode.test.short_name}`;
-        let buildPreparationError = buildPreparationErrors.get(testNode.project.key);
-        if (buildPreparationError === undefined) {
-          try {
-            await ensureProjectBuildTree(testNode.project);
-            buildPreparationError = null;
-          } catch (error) {
-            buildPreparationError = error instanceof Error ? error.message : String(error);
-            appendOutput(`${buildPreparationError}\n`);
+      const runnableTests = [];
+      for (const [projectKey, projectTests] of testNodesByProject.entries()) {
+        const project = PROJECTS[projectKey];
+        try {
+          await prepareProjectForTestRun(project, projectTests.length);
+        } catch (error) {
+          const buildPreparationError = error instanceof Error ? error.message : String(error);
+          appendOutput(`${buildPreparationError}\n`);
+          failures += projectTests.length;
+          for (const testNode of projectTests) {
+            ensureFailedRunArtifacts(
+              provider.rootPath,
+              testNode.project,
+              testNode.test,
+              buildPreparationError
+            );
           }
-          buildPreparationErrors.set(testNode.project.key, buildPreparationError);
-        }
-
-        if (buildPreparationError) {
-          failures += 1;
-          ensureFailedRunArtifacts(
-            provider.rootPath,
-            testNode.project,
-            testNode.test,
-            buildPreparationError
-          );
           provider.refresh();
           continue;
         }
 
-        const buildDir = path.join(provider.rootPath, ...testNode.project.buildDir);
-        progress.report({
-          message: `[${index + 1}/${tests.length}] ${label}`,
-          increment: Math.round(100 / tests.length)
-        });
-        appendOutput(`\n$ make -C ${buildDir} --no-print-directory ${testNode.test.full_name}.result\n`);
+        runnableTests.push(...projectTests);
+      }
 
-        const { failures: cleanupFailures } = removeArtifactFiles(
-          Object.values(artifactPathsForTest(provider.rootPath, testNode.project, testNode.test))
+      if (runnableTests.length) {
+        const results = await runWithConcurrency(
+          runnableTests,
+          maxJobs,
+          (testNode) =>
+            runSingleTestNode(testNode, {
+              index: tests.indexOf(testNode),
+              total: tests.length,
+              progress,
+              streamOutput: maxJobs === 1
+            })
         );
-        if (cleanupFailures.length) {
-          failures += 1;
-          appendOutput("Could not remove existing artifacts before rerun:\n");
-          for (const failure of cleanupFailures) {
-            appendOutput(`- ${failure}\n`);
-          }
-          ensureFailedRunArtifacts(
-            provider.rootPath,
-            testNode.project,
-            testNode.test,
-            [
-              "Run failed before execution because existing artifacts could not be removed.",
-              ...cleanupFailures.map((failure) => `- ${failure}`)
-            ].join("\n")
-          );
-          continue;
-        }
-
-        const runLog = [];
-        const exitCode = await new Promise((resolve) => {
-          const child = spawnStreaming(
-            "make",
-            [
-              "-C",
-              buildDir,
-              "--no-print-directory",
-              `${testNode.test.full_name}.result`
-            ],
-            {
-              cwd: provider.rootPath,
-              env: makeEnv(provider.rootPath)
-            },
-            (text) => {
-              appendOutput(text);
-              runLog.push(text);
-            }
-          );
-          child.on("error", () => resolve(1));
-          child.on("close", (code) => resolve(code ?? 1));
-        });
-
-        if (exitCode !== 0) {
-          ensureFailedRunArtifacts(
-            provider.rootPath,
-            testNode.project,
-            testNode.test,
-            runLog.join("").trim()
-              ? runLog.join("")
-              : `make exited with ${exitCode}`
-          );
-        }
-
-        provider.refresh();
-        const refreshed = provider.buildTestNode(testNode.project, testNode.test);
-        if (exitCode !== 0 || refreshed.status !== "pass") {
-          failures += 1;
-        }
+        failures += results.filter((passed) => !passed).length;
       }
     }
   );
@@ -2058,12 +2238,12 @@ async function runTests(nodes) {
 }
 
 async function runProject(projectNode) {
-  const tests = await provider.getDescendantTestNodes(projectNode);
+  const tests = await provider.getDescendantTestNodes(projectNode, { visibleOnly: true });
   return runTests(tests);
 }
 
 async function runGroup(groupNode) {
-  const tests = await provider.getDescendantTestNodes(groupNode);
+  const tests = await provider.getDescendantTestNodes(groupNode, { visibleOnly: true });
   return runTests(tests);
 }
 
@@ -2364,6 +2544,24 @@ async function openTestSource(testNode) {
 
   const document = await vscode.workspace.openTextDocument(sourceFilePath);
   await vscode.window.showTextDocument(document, { preview: false });
+}
+
+async function searchTests() {
+  const value = await vscode.window.showInputBox({
+    prompt: "Filter tests by name",
+    value: provider.getSearchQuery(),
+    placeHolder: "alarm-zero, tests/threads/alarm-zero"
+  });
+  if (value === undefined) {
+    return;
+  }
+  provider.setSearchQuery(value);
+  syncSearchState();
+}
+
+function clearSearch() {
+  provider.setSearchQuery("");
+  syncSearchState();
 }
 
 function customGroupPlaceholderSelector(project) {
@@ -3066,13 +3264,50 @@ function registerCommand(context, name, fn) {
   context.subscriptions.push(vscode.commands.registerCommand(name, fn));
 }
 
+function syncViewDescription(sortMode, resultFilter, searchQuery) {
+  if (treeView) {
+    const parts = [sortModeLabel(sortMode), resultFilterLabel(resultFilter)];
+    if (searchQuery) {
+      parts.push(`Search: ${searchQuery}`);
+    }
+    treeView.description = parts.join(" / ");
+  }
+}
+
 function syncSortModeState(context, sortMode) {
   const normalized = normalizeSortMode(sortMode);
-  if (treeView) {
-    treeView.description = sortModeLabel(normalized);
-  }
+  syncViewDescription(
+    normalized,
+    provider?.getResultFilter?.() || DEFAULT_RESULT_FILTER,
+    provider?.getSearchQuery?.() || ""
+  );
   void context.workspaceState.update(SORT_MODE_STATE_KEY, normalized);
   void vscode.commands.executeCommand("setContext", SORT_MODE_STATE_KEY, normalized);
+}
+
+function syncResultFilterState(context, resultFilter) {
+  const normalized = normalizeResultFilter(resultFilter);
+  syncViewDescription(
+    provider?.getSortMode?.() || DEFAULT_SORT_MODE,
+    normalized,
+    provider?.getSearchQuery?.() || ""
+  );
+  void context.workspaceState.update(RESULT_FILTER_STATE_KEY, normalized);
+  void vscode.commands.executeCommand("setContext", RESULT_FILTER_STATE_KEY, normalized);
+}
+
+function syncSearchState() {
+  const searchQuery = provider?.getSearchQuery?.() || "";
+  syncViewDescription(
+    provider?.getSortMode?.() || DEFAULT_SORT_MODE,
+    provider?.getResultFilter?.() || DEFAULT_RESULT_FILTER,
+    searchQuery
+  );
+  void vscode.commands.executeCommand(
+    "setContext",
+    SEARCH_ACTIVE_STATE_KEY,
+    Boolean(searchQuery)
+  );
 }
 
 function registerPintosDebugConfigurationProvider(context) {
@@ -3124,7 +3359,10 @@ function activate(context) {
   const initialSortMode = normalizeSortMode(
     context.workspaceState.get(SORT_MODE_STATE_KEY)
   );
-  provider = new PintosTreeProvider(rootPath, initialSortMode);
+  const initialResultFilter = normalizeResultFilter(
+    context.workspaceState.get(RESULT_FILTER_STATE_KEY)
+  );
+  provider = new PintosTreeProvider(rootPath, initialSortMode, initialResultFilter);
   treeView = vscode.window.createTreeView("pintosTests", {
     treeDataProvider: provider,
     // Keep multi-run behavior in a single place: the tree checkboxes.
@@ -3133,6 +3371,8 @@ function activate(context) {
     showCollapseAll: false
   });
   syncSortModeState(context, initialSortMode);
+  syncResultFilterState(context, initialResultFilter);
+  syncSearchState();
 
   context.subscriptions.push(outputChannel, treeView);
   outputChannel.appendLine("Pintos Test Explorer activated.");
@@ -3181,6 +3421,17 @@ function activate(context) {
         : SORT_MODE_RECENT;
     provider.setSortMode(nextSortMode);
     syncSortModeState(context, nextSortMode);
+  });
+  registerCommand(context, "pintosTests.toggleResultFilter", () => {
+    const resultFilter = nextResultFilter(provider.getResultFilter());
+    provider.setResultFilter(resultFilter);
+    syncResultFilterState(context, resultFilter);
+  });
+  registerCommand(context, "pintosTests.searchTests", async () => {
+    await searchTests();
+  });
+  registerCommand(context, "pintosTests.clearSearch", () => {
+    clearSearch();
   });
   registerCommand(context, "pintosTests.clearChecked", async () => {
     await clearCheckedArtifacts();

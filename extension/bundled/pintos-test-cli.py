@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import difflib
 import fnmatch
 import json
@@ -131,6 +132,7 @@ def discover_repo_root() -> Path:
 GDB_SERVER_SCRIPT = Path(__file__).resolve().with_name("pintos-gdb-server.sh")
 ARTIFACT_KINDS = ("output", "result", "errors")
 BUILD_ERROR_RESULT = "BUILD_ERROR"
+DEFAULT_PARALLEL_TEST_JOBS = 4
 CUSTOM_TESTS_DIR_NAME = "custom"
 CUSTOM_SCAFFOLD_MARKER_LINE = "# Added by Pintos Test Explorer"
 ROOT_DIR: Path | None = None
@@ -155,6 +157,17 @@ class TestEntry:
     short_name: str
     group: str
     source_path: str | None = None
+
+
+@dataclass(frozen=True)
+class TestRunResult:
+    selected_index: int
+    entry: TestEntry
+    cleanup_failures: tuple[str, ...]
+    run_log: str
+    return_code: int | None
+    passed: bool
+    status: str
 
 
 PROJECTS: dict[str, ProjectMeta] = {}
@@ -1212,6 +1225,72 @@ def summarize_result(meta: ProjectMeta, entry: TestEntry) -> tuple[bool, str]:
     return False, result_text or "unknown result"
 
 
+def parse_positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def run_single_test(meta: ProjectMeta, entry: TestEntry, selected_index: int) -> TestRunResult:
+    _removed, cleanup_failures = remove_artifact_paths(existing_artifact_paths(meta, entry))
+    if cleanup_failures:
+        ensure_failed_run_artifacts(
+            meta,
+            entry,
+            details="\n".join(
+                [
+                    "Run failed before execution because existing artifacts could not be removed.",
+                    *[f"- {failure}" for failure in cleanup_failures],
+                ]
+            ),
+        )
+        return TestRunResult(
+            selected_index=selected_index,
+            entry=entry,
+            cleanup_failures=tuple(cleanup_failures),
+            run_log="",
+            return_code=1,
+            passed=False,
+            status="BUILD ERROR",
+        )
+
+    completed = subprocess.run(
+        ["make", "-C", str(meta.build_dir), "--no-print-directory", f"{entry.full_name}.result"],
+        env=make_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    run_log = completed.stdout or ""
+
+    if completed.returncode != 0:
+        ensure_failed_run_artifacts(
+            meta,
+            entry,
+            details=(run_log.strip() or f"make exited with {completed.returncode}"),
+        )
+
+    passed, status = summarize_result(meta, entry)
+    if completed.returncode != 0:
+        passed = False
+        status = "BUILD ERROR"
+
+    return TestRunResult(
+        selected_index=selected_index,
+        entry=entry,
+        cleanup_failures=(),
+        run_log=run_log,
+        return_code=completed.returncode,
+        passed=passed,
+        status=status,
+    )
+
+
 def print_artifacts(meta: ProjectMeta, entry: TestEntry, json_mode: bool) -> int:
     paths = artifact_paths(meta, entry)
     existing = {kind: str(path) for kind, path in paths.items() if path.exists()}
@@ -1582,67 +1661,77 @@ def reset_all_tests(*, json_mode: bool) -> int:
     return 0 if not failures else 1
 
 
-def run_selected_tests(meta: ProjectMeta, entries: list[TestEntry]) -> int:
+def prepare_build_for_test_run(meta: ProjectMeta, test_count: int) -> None:
+    build_makefile_existed = (meta.build_dir / "Makefile").exists()
     ensure_build_tree(meta)
+    if test_count <= 1 or not build_makefile_existed:
+        return
+
+    try:
+        subprocess.run(
+            ["make", "-C", str(meta.project_dir)],
+            check=True,
+            env=make_env(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise CliError(
+            f"Could not build {meta.name} before running tests. "
+            f"`make -C {meta.project_dir}` failed."
+        ) from exc
+    ensure_project_build_subdirs(meta)
+    ensure_registered_test_output_dirs(meta)
+
+
+def run_selected_tests(meta: ProjectMeta, entries: list[TestEntry], *, jobs: int) -> int:
+    prepare_build_for_test_run(meta, len(entries))
     record_history(meta, entries, action="run")
     print("", file=sys.stderr)
     print(f"[{meta.name}] Running {len(entries)} test(s)", file=sys.stderr)
+    print(f"[{meta.name}] Using up to {min(jobs, len(entries))} parallel job(s)", file=sys.stderr)
     print("", file=sys.stderr)
 
     failures = 0
-    for offset, entry in enumerate(entries, start=1):
-        print(f"[{offset}/{len(entries)}] {entry.short_name}", file=sys.stderr, flush=True)
-        _removed, cleanup_failures = remove_artifact_paths(existing_artifact_paths(meta, entry))
-        if cleanup_failures:
+    results: dict[int, TestRunResult] = {}
+    worker_count = max(1, min(jobs, len(entries)))
+    if worker_count > 1:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(run_single_test, meta, entry, selected_index=index): index
+                for index, entry in enumerate(entries, start=1)
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                results[result.selected_index] = result
+    else:
+        for index, entry in enumerate(entries, start=1):
+            result = run_single_test(meta, entry, selected_index=index)
+            results[result.selected_index] = result
+
+    for index, entry in enumerate(entries, start=1):
+        result = results[index]
+        if result.cleanup_failures:
             failures += 1
+            print(f"[{index}/{len(entries)}] {entry.short_name}", file=sys.stderr, flush=True)
             print("Could not remove existing artifacts before rerun:", file=sys.stderr)
-            for failure in cleanup_failures:
+            for failure in result.cleanup_failures:
                 print(f"- {failure}", file=sys.stderr)
             print("", file=sys.stderr)
-            ensure_failed_run_artifacts(
-                meta,
-                entry,
-                details="\n".join(
-                    [
-                        "Run failed before execution because existing artifacts could not be removed.",
-                        *[f"- {failure}" for failure in cleanup_failures],
-                    ]
-                ),
-            )
             continue
-        target = f"{entry.full_name}.result"
-        run_log: list[str] = []
-        completed = subprocess.Popen(
-            ["make", "-C", str(meta.build_dir), "--no-print-directory", target],
-            env=make_env(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        assert completed.stdout is not None
-        for line in completed.stdout:
+
+        print(f"[{index}/{len(entries)}] {entry.short_name}", file=sys.stderr, flush=True)
+        for line in result.run_log.splitlines(keepends=True):
             sys.stderr.write(line)
+        if result.run_log:
             sys.stderr.flush()
-            run_log.append(line)
-        return_code = completed.wait()
 
-        if return_code != 0:
-            ensure_failed_run_artifacts(
-                meta,
-                entry,
-                details="".join(run_log).strip() or f"make exited with {return_code}",
-            )
-
-        passed, status = summarize_result(meta, entry)
-        if return_code != 0:
-            passed = False
-            status = "BUILD ERROR"
-
+        passed = result.passed
         if passed:
             print(f"PASS  {entry.short_name}", file=sys.stderr)
         else:
             failures += 1
-            print(f"FAIL  {entry.short_name} ({status})", file=sys.stderr)
+            print(f"FAIL  {entry.short_name} ({result.status})", file=sys.stderr)
         print("", file=sys.stderr)
 
     passed_count = len(entries) - failures
@@ -1790,6 +1879,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         help="Number, range, name, pattern, or all",
     )
+    run_parser.add_argument(
+        "--jobs",
+        type=parse_positive_int,
+        default=DEFAULT_PARALLEL_TEST_JOBS,
+        help=f"Maximum number of tests to run in parallel (default: {DEFAULT_PARALLEL_TEST_JOBS})",
+    )
     run_parser.add_argument("--recent-first", action="store_true", help="Sort most recently used tests first during interactive selection")
 
     debug_parser = subparsers.add_parser("debug", help="Debug a test")
@@ -1905,7 +2000,7 @@ def main() -> int:
                 recent_first=args.recent_first,
                 stream=sys.stderr,
             )
-            return run_selected_tests(meta, entries)
+            return run_selected_tests(meta, entries, jobs=args.jobs)
 
         if args.command == "debug":
             entries = pick_entries(
