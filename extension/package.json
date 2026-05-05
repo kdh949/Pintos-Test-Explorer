@@ -76,10 +76,13 @@
     "workspaceContains:**/tests/Make.tests",
     "workspaceContains:**/pintos/tests/Make.tests",
     "onView:pintosTests",
+    "onView:pintosPassedTests",
+    "onView:pintosNotPassedTests",
     "onCommand:pintosTests.refresh",
     "onCommand:pintosTests.collapseAll",
     "onCommand:pintosTests.toggleSortOrder",
     "onCommand:pintosTests.toggleResultFilter",
+    "onCommand:pintosTests.toggleSplitView",
     "onCommand:pintosTests.searchTests",
     "onCommand:pintosTests.clearSearch",
     "onCommand:pintosTests.runSelected",
@@ -111,7 +114,18 @@
       "pintosExplorer": [
         {
           "id": "pintosTests",
-          "name": "Pintos Tests"
+          "name": "Pintos Tests",
+          "when": "!pintosTests.splitViewActive"
+        },
+        {
+          "id": "pintosPassedTests",
+          "name": "Passed Tests",
+          "when": "pintosTests.splitViewActive"
+        },
+        {
+          "id": "pintosNotPassedTests",
+          "name": "Not Passed Tests",
+          "when": "pintosTests.splitViewActive"
         }
       ]
     },
@@ -266,6 +280,15 @@
         "command": "pintosTests.openArtifact",
         "title": "Open Artifact",
         "category": "Pintos"
+      },
+      {
+        "command": "pintosTests.toggleSplitView",
+        "title": "Toggle Split Result View",
+        "category": "Pintos",
+        "icon": {
+          "light": "media/filter.svg",
+          "dark": "media/filter.svg"
+        }
       }
     ],
     "configuration": {
@@ -330,97 +353,147 @@
           "command": "pintosTests.runSelected",
           "when": "view == pintosTests",
           "group": "navigation@10"
+        },
+        {
+          "command": "pintosTests.toggleSplitView",
+          "when": "view == pintosTests",
+          "group": "navigation@11"
+        },
+        {
+          "command": "pintosTests.refresh",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pintosTests.toggleSortOrder",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@2"
+        },
+        {
+          "command": "pintosTests.toggleResultFilter",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@3"
+        },
+        {
+          "command": "pintosTests.searchTests",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@4"
+        },
+        {
+          "command": "pintosTests.clearSearch",
+          "when": "(view == pintosPassedTests || view == pintosNotPassedTests) && pintosTests.searchActive",
+          "group": "navigation@5"
+        },
+        {
+          "command": "pintosTests.collapseAll",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@6"
+        },
+        {
+          "command": "pintosTests.runSelected",
+          "when": "view == pintosPassedTests || view == pintosNotPassedTests",
+          "group": "navigation@7"
+        },
+        {
+          "command": "pintosTests.toggleSplitView",
+          "when": "view == pintosPassedTests",
+          "group": "navigation@8"
+        },
+        {
+          "command": "pintosTests.toggleSplitView",
+          "when": "view == pintosNotPassedTests",
+          "group": "navigation@8"
         }
       ],
       "view/item/context": [
         {
           "command": "pintosTests.createCustomTestCase",
-          "when": "view == pintosTests && viewItem == pintosProject",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosProject",
           "group": "navigation@1"
         },
         {
           "command": "pintosTests.createCustomTestCase",
-          "when": "view == pintosTests && viewItem == pintosGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosGroup",
           "group": "navigation@1"
         },
         {
           "command": "pintosTests.createCustomTestCase",
-          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTestGroup",
           "group": "navigation@1"
         },
         {
           "command": "pintosTests.createCustomTestCase",
-          "when": "view == pintosTests && viewItem == pintosTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosTest",
           "group": "navigation@1"
         },
         {
           "command": "pintosTests.createCustomTestCase",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "navigation@1"
         },
         {
           "command": "pintosTests.runProject",
-          "when": "view == pintosTests && viewItem == pintosProject",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosProject",
           "group": "navigation@2"
         },
         {
           "command": "pintosTests.runGroup",
-          "when": "view == pintosTests && viewItem == pintosGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosGroup",
           "group": "navigation@2"
         },
         {
           "command": "pintosTests.runGroup",
-          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTestGroup",
           "group": "navigation@2"
         },
         {
           "command": "pintosTests.renameCustomTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTestGroup",
           "group": "navigation@3"
         },
         {
           "command": "pintosTests.renameCustomTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "navigation@3"
         },
         {
           "command": "pintosTests.deleteCustomTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTestGroup",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTestGroup",
           "group": "navigation@4"
         },
         {
           "command": "pintosTests.deleteCustomTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "navigation@4"
         },
         {
           "command": "pintosTests.openTestSource",
-          "when": "view == pintosTests && viewItem == pintosTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosTest",
           "group": "inline@1"
         },
         {
           "command": "pintosTests.openTestSource",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "inline@1"
         },
         {
           "command": "pintosTests.debugTest",
-          "when": "view == pintosTests && viewItem == pintosTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosTest",
           "group": "inline@2"
         },
         {
           "command": "pintosTests.debugTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "inline@2"
         },
         {
           "command": "pintosTests.runTest",
-          "when": "view == pintosTests && viewItem == pintosTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosTest",
           "group": "inline@3"
         },
         {
           "command": "pintosTests.runTest",
-          "when": "view == pintosTests && viewItem == pintosCustomTest",
+          "when": "(view == pintosTests || view == pintosPassedTests || view == pintosNotPassedTests) && viewItem == pintosCustomTest",
           "group": "inline@3"
         }
       ]

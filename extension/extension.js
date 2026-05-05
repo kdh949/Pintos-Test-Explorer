@@ -48,6 +48,7 @@ const RESULT_FILTER_NOT_PASSED = "notPassed";
 const DEFAULT_RESULT_FILTER = RESULT_FILTER_ALL;
 const RESULT_FILTER_STATE_KEY = "pintosTests.resultFilter";
 const SEARCH_ACTIVE_STATE_KEY = "pintosTests.searchActive";
+const SPLIT_VIEW_STATE_KEY = "pintosTests.splitViewActive";
 const DEFAULT_PARALLEL_TEST_JOBS = 4;
 const PINTOS_ROOT_LAYOUTS = [
   [],
@@ -101,7 +102,11 @@ const DEFAULT_GROUP_RULES = {
 };
 
 let treeView = null;
+let passedTreeView = null;
+let notPassedTreeView = null;
 let provider = null;
+let passedProvider = null;
+let notPassedProvider = null;
 let outputChannel = null;
 let activeDebugServer = null;
 let extensionInstallPath = null;
@@ -112,20 +117,22 @@ let debugServerTransition = Promise.resolve();
 const executableCache = new Map();
 
 class ProjectNode {
-  constructor(project, summary) {
+  constructor(project, summary, viewResultFilter = null) {
     this.nodeType = "project";
     this.project = project;
     this.summary = summary;
+    this.viewResultFilter = viewResultFilter;
   }
 }
 
 class GroupNode {
-  constructor(project, groupSegments, summary, groupKind = "standard") {
+  constructor(project, groupSegments, summary, groupKind = "standard", viewResultFilter = null) {
     this.nodeType = "group";
     this.project = project;
     this.groupSegments = groupSegments;
     this.summary = summary;
     this.groupKind = groupKind;
+    this.viewResultFilter = viewResultFilter;
   }
 }
 
@@ -156,7 +163,8 @@ class PintosTreeProvider {
   constructor(
     rootPath,
     sortMode = DEFAULT_SORT_MODE,
-    resultFilter = DEFAULT_RESULT_FILTER
+    resultFilter = DEFAULT_RESULT_FILTER,
+    options = {}
   ) {
     this.rootPath = rootPath;
     this._onDidChangeTreeData = new vscode.EventEmitter();
@@ -166,7 +174,7 @@ class PintosTreeProvider {
     this.customGroupCache = new Map();
     this.testLoadPromises = new Map();
     this.testNodeLoadPromises = new Map();
-    this.checkedTestKeys = new Set();
+    this.checkedTestKeys = options.checkedTestKeys || new Set();
     this.pendingCheckboxStates = new Map();
     this.checkboxChangeQueue = Promise.resolve();
     this.checkboxGeneration = 0;
@@ -400,9 +408,9 @@ class PintosTreeProvider {
     return selected;
   }
 
-  filterTestNodes(nodes) {
+  filterTestNodes(nodes, resultFilter = this.resultFilter) {
     return nodes.filter((node) =>
-      matchesResultFilter(node, this.resultFilter) &&
+      matchesResultFilter(node, resultFilter) &&
       matchesSearchQuery(node, this.searchQuery)
     );
   }
@@ -529,7 +537,7 @@ class PintosTreeProvider {
         PROJECT_ORDER.map(async (key) => {
           const project = PROJECTS[key];
           const nodes = await this.getVisibleTestNodesForProject(project);
-          return new ProjectNode(project, this.summarizeTestNodes(nodes));
+          return new ProjectNode(project, this.summarizeTestNodes(nodes), this.resultFilter);
         })
       );
       return projects;
@@ -567,7 +575,8 @@ class PintosTreeProvider {
           project,
           group.groupSegments,
           this.summarizeTestNodes(group.testNodes),
-          inferGroupKind(group.groupSegments)
+          inferGroupKind(group.groupSegments),
+          this.resultFilter
         )
     );
     return [...groupNodes, ...tests];
@@ -599,7 +608,10 @@ class PintosTreeProvider {
     }
 
     const testNodes = options.visibleOnly
-      ? await this.getVisibleTestNodesForProject(node.project)
+      ? this.filterTestNodes(
+        await this.getTestNodesForProject(node.project),
+        node.viewResultFilter || this.resultFilter
+      )
       : await this.getTestNodesForProject(node.project);
     if (node.nodeType === "project") {
       return testNodes;
@@ -2091,7 +2103,7 @@ async function runSingleTestNode(testNode, runContext) {
         ...cleanupFailures.map((failure) => `- ${failure}`)
       ].join("\n")
     );
-    provider.refresh();
+    refreshAllProviders();
     return false;
   }
 
@@ -2135,7 +2147,7 @@ async function runSingleTestNode(testNode, runContext) {
     );
   }
 
-  provider.refresh();
+  refreshAllProviders();
   const refreshed = provider.buildTestNode(testNode.project, testNode.test);
   return exitCode === 0 && refreshed.status === "pass";
 }
@@ -2191,7 +2203,7 @@ async function runTests(nodes) {
               buildPreparationError
             );
           }
-          provider.refresh();
+          refreshAllProviders();
           continue;
         }
 
@@ -2215,7 +2227,7 @@ async function runTests(nodes) {
     }
   );
 
-  provider.refresh();
+  refreshAllProviders();
   const passed = tests.length - failures;
   const summary = `${passed} passed, ${failures} failed, ${tests.length} total`;
   appendOutput(`\n=== Summary: ${summary} ===\n`);
@@ -2464,6 +2476,7 @@ async function clearCheckedArtifacts() {
   }
 
   provider.clearCheckedNodes(checked);
+  refreshAllProviderViews();
 
   if (failures.length) {
     vscode.window.showWarningMessage(
@@ -2497,7 +2510,7 @@ async function clearAllArtifacts() {
     outputChannel.show(true);
   }
 
-  provider.refresh({ clearChecked: true });
+  refreshAllProviders({ clearChecked: true });
 
   if (failures.length) {
     vscode.window.showWarningMessage(
@@ -2536,7 +2549,7 @@ async function openTestSource(testNode) {
   await vscode.window.showTextDocument(document, { preview: false });
 }
 
-async function searchTests() {
+async function searchTests(context) {
   const value = await vscode.window.showInputBox({
     prompt: "Filter tests by name",
     value: provider.getSearchQuery(),
@@ -2545,31 +2558,38 @@ async function searchTests() {
   if (value === undefined) {
     return;
   }
-  provider.setSearchQuery(value);
-  syncSearchState();
+  setSearchQueryForProviders(value);
+  syncSearchState(context);
 }
 
 async function chooseResultFilter(context) {
   const current = provider.getResultFilter();
+  const isSplitViewActive = splitViewActive(context);
   const picked = await vscode.window.showQuickPick(
     [
       {
         label: "All results",
-        description: current === RESULT_FILTER_ALL ? "Current" : "",
+        description: !isSplitViewActive && current === RESULT_FILTER_ALL ? "Current" : "",
         detail: "Show every test, including tests that have not run.",
         resultFilter: RESULT_FILTER_ALL
       },
       {
         label: "Passed",
-        description: current === RESULT_FILTER_PASSED ? "Current" : "",
+        description: !isSplitViewActive && current === RESULT_FILTER_PASSED ? "Current" : "",
         detail: "Show only tests with PASS results.",
         resultFilter: RESULT_FILTER_PASSED
       },
       {
         label: "Not passed",
-        description: current === RESULT_FILTER_NOT_PASSED ? "Current" : "",
+        description: !isSplitViewActive && current === RESULT_FILTER_NOT_PASSED ? "Current" : "",
         detail: "Show FAIL and Build error results. Not run tests are hidden.",
         resultFilter: RESULT_FILTER_NOT_PASSED
+      },
+      {
+        label: "Split view",
+        description: isSplitViewActive ? "Current" : "",
+        detail: "Show passed tests above not passed tests in separate views.",
+        splitView: true
       }
     ],
     {
@@ -2579,13 +2599,18 @@ async function chooseResultFilter(context) {
   if (!picked) {
     return;
   }
+  if (picked.splitView) {
+    syncSplitViewState(context, true);
+    return;
+  }
+  syncSplitViewState(context, false);
   provider.setResultFilter(picked.resultFilter);
   syncResultFilterState(context, picked.resultFilter);
 }
 
-function clearSearch() {
-  provider.setSearchQuery("");
-  syncSearchState();
+function clearSearch(context) {
+  setSearchQueryForProviders("");
+  syncSearchState(context);
 }
 
 function customGroupPlaceholderSelector(project) {
@@ -3093,7 +3118,7 @@ async function createCustomGroupFile(node) {
   if (!created) {
     vscode.window.showInformationMessage("Opened the existing custom folder rule file without changing it.");
   }
-  provider.refresh();
+  refreshAllProviders();
 }
 
 async function createCustomTestCase(node) {
@@ -3137,7 +3162,7 @@ async function createCustomTestCase(node) {
   vscode.window.showInformationMessage(
     `Created custom test ${payload.full_name || customTestFullName(project, normalized)}.`
   );
-  provider.refresh();
+  refreshAllProviders();
 }
 
 function customGroupRootDir(rootPath, project) {
@@ -3174,7 +3199,7 @@ async function deleteCustomGroupNode(node) {
 
   if (!fs.existsSync(targetPath)) {
     vscode.window.showWarningMessage("That custom folder rule no longer exists on disk.");
-    provider.refresh();
+    refreshAllProviders();
     return;
   }
 
@@ -3188,7 +3213,7 @@ async function deleteCustomGroupNode(node) {
 
   fs.rmSync(targetPath, { recursive: true, force: true });
   pruneEmptyDirectories(path.dirname(targetPath), groupRootDir);
-  provider.refresh();
+  refreshAllProviders();
   vscode.window.showInformationMessage(`Deleted custom folder rule ${relativeLabel}.`);
 }
 
@@ -3236,6 +3261,7 @@ async function deleteCustomTestNode(node) {
   );
 
   provider.clearCheckedNodes(testNodes);
+  refreshAllProviderViews();
   vscode.window.showInformationMessage(
     isCustomGroup
       ? `Deleted ${testNodes.length} custom test(s) from ${descriptor}.`
@@ -3275,7 +3301,7 @@ async function renameCustomTestNode(node) {
     }))
     : [{ full_name: customTestFullName(project, normalized) }];
   ensureTestBuildOutputDirectories(provider.rootPath, project, renamedTests);
-  provider.refresh();
+  refreshAllProviders();
   const renamedCount = Array.isArray(payload.renamed_tests) ? payload.renamed_tests.length : 1;
   vscode.window.showInformationMessage(
     renamedCount > 1
@@ -3288,49 +3314,112 @@ function registerCommand(context, name, fn) {
   context.subscriptions.push(vscode.commands.registerCommand(name, fn));
 }
 
-function syncViewDescription(sortMode, resultFilter, searchQuery) {
+function treeProviders() {
+  return [provider, passedProvider, notPassedProvider].filter(Boolean);
+}
+
+function refreshAllProviders(options = {}) {
+  for (const treeProvider of treeProviders()) {
+    treeProvider.refresh(options);
+  }
+}
+
+function refreshAllProviderViews() {
+  for (const treeProvider of treeProviders()) {
+    treeProvider.refreshView();
+  }
+}
+
+function setSearchQueryForProviders(searchQuery) {
+  for (const treeProvider of treeProviders()) {
+    treeProvider.setSearchQuery(searchQuery);
+  }
+}
+
+function setSortModeForProviders(sortMode) {
+  for (const treeProvider of treeProviders()) {
+    treeProvider.setSortMode(sortMode);
+  }
+}
+
+function splitViewActive(context) {
+  return Boolean(context.workspaceState.get(SPLIT_VIEW_STATE_KEY, false));
+}
+
+function syncViewDescriptions(sortMode, resultFilter, searchQuery, isSplitViewActive) {
   if (treeView) {
-    const parts = [sortModeLabel(sortMode), resultFilterLabel(resultFilter)];
+    const parts = isSplitViewActive
+      ? [sortModeLabel(sortMode), "Split view"]
+      : [sortModeLabel(sortMode), resultFilterLabel(resultFilter)];
     if (searchQuery) {
       parts.push(`Search: ${searchQuery}`);
     }
     treeView.description = parts.join(" / ");
   }
+  const splitParts = [sortModeLabel(sortMode)];
+  if (searchQuery) {
+    splitParts.push(`Search: ${searchQuery}`);
+  }
+  if (passedTreeView) {
+    passedTreeView.description = splitParts.join(" / ");
+  }
+  if (notPassedTreeView) {
+    notPassedTreeView.description = splitParts.join(" / ");
+  }
+}
+
+function syncCurrentViewState(context, splitViewOverride = null) {
+  syncViewDescriptions(
+    provider?.getSortMode?.() || DEFAULT_SORT_MODE,
+    provider?.getResultFilter?.() || DEFAULT_RESULT_FILTER,
+    provider?.getSearchQuery?.() || "",
+    splitViewOverride === null ? splitViewActive(context) : Boolean(splitViewOverride)
+  );
 }
 
 function syncSortModeState(context, sortMode) {
   const normalized = normalizeSortMode(sortMode);
-  syncViewDescription(
-    normalized,
-    provider?.getResultFilter?.() || DEFAULT_RESULT_FILTER,
-    provider?.getSearchQuery?.() || ""
-  );
+  syncCurrentViewState(context);
   void context.workspaceState.update(SORT_MODE_STATE_KEY, normalized);
   void vscode.commands.executeCommand("setContext", SORT_MODE_STATE_KEY, normalized);
 }
 
 function syncResultFilterState(context, resultFilter) {
   const normalized = normalizeResultFilter(resultFilter);
-  syncViewDescription(
-    provider?.getSortMode?.() || DEFAULT_SORT_MODE,
-    normalized,
-    provider?.getSearchQuery?.() || ""
-  );
+  syncCurrentViewState(context);
   void context.workspaceState.update(RESULT_FILTER_STATE_KEY, normalized);
   void vscode.commands.executeCommand("setContext", RESULT_FILTER_STATE_KEY, normalized);
 }
 
-function syncSearchState() {
+function syncSearchState(context) {
   const searchQuery = provider?.getSearchQuery?.() || "";
-  syncViewDescription(
-    provider?.getSortMode?.() || DEFAULT_SORT_MODE,
-    provider?.getResultFilter?.() || DEFAULT_RESULT_FILTER,
-    searchQuery
-  );
+  syncCurrentViewState(context);
   void vscode.commands.executeCommand(
     "setContext",
     SEARCH_ACTIVE_STATE_KEY,
     Boolean(searchQuery)
+  );
+}
+
+function syncSplitViewState(context, isActive) {
+  void context.workspaceState.update(SPLIT_VIEW_STATE_KEY, Boolean(isActive));
+  void vscode.commands.executeCommand(
+    "setContext",
+    SPLIT_VIEW_STATE_KEY,
+    Boolean(isActive)
+  );
+  syncCurrentViewState(context, Boolean(isActive));
+  refreshAllProviderViews();
+}
+
+function registerTreeCheckboxHandler(context, view, treeProvider) {
+  if (typeof view.onDidChangeCheckboxState !== "function") {
+    return;
+  }
+  context.subscriptions.push(
+    view.onDidChangeCheckboxState((event) => {
+      void treeProvider.enqueueCheckboxChanges([...event.items]);
+    })
   );
 }
 
@@ -3386,7 +3475,25 @@ function activate(context) {
   const initialResultFilter = normalizeResultFilter(
     context.workspaceState.get(RESULT_FILTER_STATE_KEY)
   );
-  provider = new PintosTreeProvider(rootPath, initialSortMode, initialResultFilter);
+  const checkedTestKeys = new Set();
+  provider = new PintosTreeProvider(
+    rootPath,
+    initialSortMode,
+    initialResultFilter,
+    { checkedTestKeys }
+  );
+  passedProvider = new PintosTreeProvider(
+    rootPath,
+    initialSortMode,
+    RESULT_FILTER_PASSED,
+    { checkedTestKeys }
+  );
+  notPassedProvider = new PintosTreeProvider(
+    rootPath,
+    initialSortMode,
+    RESULT_FILTER_NOT_PASSED,
+    { checkedTestKeys }
+  );
   treeView = vscode.window.createTreeView("pintosTests", {
     treeDataProvider: provider,
     // Keep multi-run behavior in a single place: the tree checkboxes.
@@ -3394,22 +3501,30 @@ function activate(context) {
     manageCheckboxStateManually: true,
     showCollapseAll: false
   });
+  passedTreeView = vscode.window.createTreeView("pintosPassedTests", {
+    treeDataProvider: passedProvider,
+    canSelectMany: false,
+    manageCheckboxStateManually: true,
+    showCollapseAll: false
+  });
+  notPassedTreeView = vscode.window.createTreeView("pintosNotPassedTests", {
+    treeDataProvider: notPassedProvider,
+    canSelectMany: false,
+    manageCheckboxStateManually: true,
+    showCollapseAll: false
+  });
   syncSortModeState(context, initialSortMode);
   syncResultFilterState(context, initialResultFilter);
-  syncSearchState();
+  syncSearchState(context);
+  syncSplitViewState(context, splitViewActive(context));
 
-  context.subscriptions.push(outputChannel, treeView);
+  context.subscriptions.push(outputChannel, treeView, passedTreeView, notPassedTreeView);
   outputChannel.appendLine("Pintos Test Explorer activated.");
   registerPintosDebugConfigurationProvider(context);
 
-  if (typeof treeView.onDidChangeCheckboxState === "function") {
-    context.subscriptions.push(
-      treeView.onDidChangeCheckboxState((event) => {
-        // Apply immediately visible pending states, then resolve folder cascades in order.
-        void provider.enqueueCheckboxChanges([...event.items]);
-      })
-    );
-  }
+  registerTreeCheckboxHandler(context, treeView, provider);
+  registerTreeCheckboxHandler(context, passedTreeView, passedProvider);
+  registerTreeCheckboxHandler(context, notPassedTreeView, notPassedProvider);
 
   const watchers = [
     vscode.workspace.createFileSystemWatcher(
@@ -3426,34 +3541,39 @@ function activate(context) {
   for (const watcher of watchers) {
     context.subscriptions.push(
       watcher,
-      watcher.onDidCreate(() => provider.refresh()),
-      watcher.onDidChange(() => provider.refresh()),
-      watcher.onDidDelete(() => provider.refresh())
+      watcher.onDidCreate(() => refreshAllProviders()),
+      watcher.onDidChange(() => refreshAllProviders()),
+      watcher.onDidDelete(() => refreshAllProviders())
     );
   }
 
-  registerCommand(context, "pintosTests.refresh", () => provider.refresh());
+  registerCommand(context, "pintosTests.refresh", () => refreshAllProviders());
   registerCommand(context, "pintosTests.collapseAll", async () => {
-    await vscode.commands.executeCommand(
-      "workbench.actions.treeView.pintosTests.collapseAll"
-    );
+    await Promise.all([
+      vscode.commands.executeCommand("workbench.actions.treeView.pintosTests.collapseAll"),
+      vscode.commands.executeCommand("workbench.actions.treeView.pintosPassedTests.collapseAll"),
+      vscode.commands.executeCommand("workbench.actions.treeView.pintosNotPassedTests.collapseAll")
+    ]);
   });
   registerCommand(context, "pintosTests.toggleSortOrder", () => {
     const nextSortMode =
       provider.getSortMode() === SORT_MODE_RECENT
         ? SORT_MODE_NUMBER
         : SORT_MODE_RECENT;
-    provider.setSortMode(nextSortMode);
+    setSortModeForProviders(nextSortMode);
     syncSortModeState(context, nextSortMode);
   });
   registerCommand(context, "pintosTests.toggleResultFilter", async () => {
     await chooseResultFilter(context);
   });
   registerCommand(context, "pintosTests.searchTests", async () => {
-    await searchTests();
+    await searchTests(context);
   });
   registerCommand(context, "pintosTests.clearSearch", () => {
-    clearSearch();
+    clearSearch(context);
+  });
+  registerCommand(context, "pintosTests.toggleSplitView", () => {
+    syncSplitViewState(context, !splitViewActive(context));
   });
   registerCommand(context, "pintosTests.clearChecked", async () => {
     await clearCheckedArtifacts();
@@ -3547,7 +3667,7 @@ function activate(context) {
         if (!latestDebugLaunchToken || session.configuration.pintosLaunchToken === latestDebugLaunchToken) {
           await stopDebugServer();
         }
-        provider.refresh();
+        refreshAllProviders();
       }
     })
   );
