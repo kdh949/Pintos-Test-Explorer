@@ -2550,16 +2550,32 @@ async function openTestSource(testNode) {
 }
 
 async function searchTests(context) {
-  const value = await vscode.window.showInputBox({
-    prompt: "Filter tests by name",
-    value: provider.getSearchQuery(),
-    placeHolder: "alarm-zero, tests/threads/alarm-zero"
+  const input = vscode.window.createInputBox();
+  input.prompt = "Filter tests by name";
+  input.value = provider.getSearchQuery();
+  input.placeHolder = "alarm-zero, tests/threads/alarm-zero";
+
+  return new Promise((resolve) => {
+    const updateSearch = () => {
+      setSearchQueryForProviders(input.value);
+      syncSearchState(context);
+    };
+    const disposables = [
+      input.onDidChangeValue(updateSearch),
+      input.onDidAccept(() => {
+        updateSearch();
+        input.hide();
+      }),
+      input.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        input.dispose();
+        resolve();
+      })
+    ];
+    input.show();
   });
-  if (value === undefined) {
-    return;
-  }
-  setSearchQueryForProviders(value);
-  syncSearchState(context);
 }
 
 async function chooseResultFilter(context) {
