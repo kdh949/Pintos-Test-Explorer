@@ -59,11 +59,13 @@
     "media/collapse.svg",
     "media/create-test.svg",
     "media/debug.svg",
+    "media/filter.svg",
     "media/open-file.svg",
     "media/pintos.svg",
     "media/play.svg",
     "media/range.svg",
-    "media/refresh.svg"
+    "media/refresh.svg",
+    "media/search.svg"
   ],
   "extensionKind": [
     "workspace"
@@ -152,11 +154,11 @@
       },
       {
         "command": "pintosTests.toggleResultFilter",
-        "title": "Toggle Result Filter",
+        "title": "Filter Test Results",
         "category": "Pintos",
         "icon": {
-          "light": "media/range.svg",
-          "dark": "media/range.svg"
+          "light": "media/filter.svg",
+          "dark": "media/filter.svg"
         }
       },
       {
@@ -164,8 +166,8 @@
         "title": "Search Tests",
         "category": "Pintos",
         "icon": {
-          "light": "media/open-file.svg",
-          "dark": "media/open-file.svg"
+          "light": "media/search.svg",
+          "dark": "media/search.svg"
         }
       },
       {

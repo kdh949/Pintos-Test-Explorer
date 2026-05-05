@@ -770,16 +770,6 @@ function normalizeResultFilter(resultFilter) {
     : RESULT_FILTER_ALL;
 }
 
-function nextResultFilter(resultFilter) {
-  if (resultFilter === RESULT_FILTER_ALL) {
-    return RESULT_FILTER_PASSED;
-  }
-  if (resultFilter === RESULT_FILTER_PASSED) {
-    return RESULT_FILTER_NOT_PASSED;
-  }
-  return RESULT_FILTER_ALL;
-}
-
 function resultFilterLabel(resultFilter) {
   if (resultFilter === RESULT_FILTER_PASSED) {
     return "Passed";
@@ -2559,6 +2549,40 @@ async function searchTests() {
   syncSearchState();
 }
 
+async function chooseResultFilter(context) {
+  const current = provider.getResultFilter();
+  const picked = await vscode.window.showQuickPick(
+    [
+      {
+        label: "All results",
+        description: current === RESULT_FILTER_ALL ? "Current" : "",
+        detail: "Show every test, including tests that have not run.",
+        resultFilter: RESULT_FILTER_ALL
+      },
+      {
+        label: "Passed",
+        description: current === RESULT_FILTER_PASSED ? "Current" : "",
+        detail: "Show only tests with PASS results.",
+        resultFilter: RESULT_FILTER_PASSED
+      },
+      {
+        label: "Not passed",
+        description: current === RESULT_FILTER_NOT_PASSED ? "Current" : "",
+        detail: "Show FAIL and Build error results. Not run tests are hidden.",
+        resultFilter: RESULT_FILTER_NOT_PASSED
+      }
+    ],
+    {
+      placeHolder: "Filter tests by result"
+    }
+  );
+  if (!picked) {
+    return;
+  }
+  provider.setResultFilter(picked.resultFilter);
+  syncResultFilterState(context, picked.resultFilter);
+}
+
 function clearSearch() {
   provider.setSearchQuery("");
   syncSearchState();
@@ -3422,10 +3446,8 @@ function activate(context) {
     provider.setSortMode(nextSortMode);
     syncSortModeState(context, nextSortMode);
   });
-  registerCommand(context, "pintosTests.toggleResultFilter", () => {
-    const resultFilter = nextResultFilter(provider.getResultFilter());
-    provider.setResultFilter(resultFilter);
-    syncResultFilterState(context, resultFilter);
+  registerCommand(context, "pintosTests.toggleResultFilter", async () => {
+    await chooseResultFilter(context);
   });
   registerCommand(context, "pintosTests.searchTests", async () => {
     await searchTests();
