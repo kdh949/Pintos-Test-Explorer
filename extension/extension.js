@@ -657,7 +657,8 @@ class PintosTreeProvider {
       artifactPaths,
       groupSegments,
       detail,
-      isDeletableCustomTest(this.rootPath, project, test.short_name)
+      isProjectOwnedTest(project, test) &&
+        isDeletableCustomTest(this.rootPath, project, test.short_name)
     );
   }
 }
@@ -1479,7 +1480,7 @@ function findDescendantPintosRoot(startPath, maxDepth = DESCENDANT_ROOT_SEARCH_M
       continue;
     }
 
-    for (const entry of entries) {
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (!entry.isDirectory()) {
         continue;
       }
@@ -1729,13 +1730,15 @@ function ensureCliRuntimeFiles(context) {
   cliRuntimeDir = targetDir;
 }
 
-function configureTerminalCli(context) {
+function configureTerminalCli(context, rootPath) {
   const bundledDir = path.dirname(bundledCliPath("pt"));
   context.environmentVariableCollection.clear();
   context.environmentVariableCollection.prepend(
     "PATH",
     `${bundledDir}${path.delimiter}`
   );
+  context.environmentVariableCollection.replace("PINTOS_ROOT", rootPath);
+  context.environmentVariableCollection.replace("PINTOS_WORKSPACE_ROOT", rootPath);
 }
 
 function detectProfileFile() {
@@ -2207,7 +2210,7 @@ function buildPintosDebugConfiguration(rootPath, testNode, gdbPath) {
     pintosHelperSession: true,
     pintosRootPath: rootPath,
     pintosProjectKey: testNode.project.key,
-    pintosTestName: testNode.test.short_name
+    pintosTestName: testNode.test.full_name
   };
 }
 
@@ -2467,6 +2470,10 @@ function customTestAbsoluteBasePath(rootPath, project, relativeTestPath) {
 
 function customTestFullName(project, relativeTestPath) {
   return `tests/${project.key}/${relativeTestPath}`;
+}
+
+function isProjectOwnedTest(project, test) {
+  return String(test?.full_name || "").startsWith(`tests/${project.key}/`);
 }
 
 function looksLikeCustomTestPath(relativeTestPath) {
@@ -2981,7 +2988,11 @@ async function deleteCustomTestNode(node) {
 
   const testNodes = isCustomGroup ? await provider.getDescendantTestNodes(node) : [node];
   const blocked = testNodes.filter(
-    (testNode) => !isDeletableCustomTest(provider.rootPath, testNode.project, testNode.test.short_name)
+    (testNode) =>
+      !(
+        isProjectOwnedTest(testNode.project, testNode.test) &&
+        isDeletableCustomTest(provider.rootPath, testNode.project, testNode.test.short_name)
+      )
   );
   if (blocked.length) {
     const names = blocked.slice(0, 5).map((testNode) => testNode.test.short_name).join(", ");
@@ -3120,7 +3131,7 @@ function activate(context) {
   outputChannel.appendLine(`Pintos root: ${rootPath}`);
   outputChannel.appendLine(`Extension path: ${extensionInstallPath}`);
   ensureCliRuntimeFiles(context);
-  configureTerminalCli(context);
+  configureTerminalCli(context, rootPath);
   const initialSortMode = normalizeSortMode(
     context.workspaceState.get(SORT_MODE_STATE_KEY)
   );

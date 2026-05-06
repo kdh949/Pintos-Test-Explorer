@@ -7,7 +7,7 @@ Pintos Test Explorer is a VS Code sidebar extension plus a bundled terminal CLI 
 ## Snapshot
 
 ```text
-1. Read Pintos tests directly from Make.tests.
+1. Match the build directory's project-owned test list when a build Makefile exists.
 2. Use the same helper logic from the sidebar, pt, and pintos-tests.
 3. Handle wrapper layouts such as pintos_22.04_lab_docker without hard-coding one folder name.
 4. Ignore stale old group JSON so built-in folders like Alarm Clock keep their intended names.
@@ -20,7 +20,7 @@ Pintos Test Explorer is a VS Code sidebar extension plus a bundled terminal CLI 
 flowchart LR
     A["VS Code Sidebar"] --> C["bundled pintos-test-cli.py"]
     B["pt / pintos-tests"] --> C
-    C --> D["tests/*/Make.tests"]
+    C --> D["build Makefile TESTS / tests/*/Make.tests"]
     C --> E["make / Pintos build tree"]
     C --> F["pintos-gdb-server.sh"]
     E --> G["output / result / errors artifacts"]

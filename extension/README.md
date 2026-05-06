@@ -13,14 +13,14 @@ Watch the walkthrough: [YouTube demo video](https://youtu.be/FyJ1jKg3zNk)
 ## Quick Summary
 
 ```text
-1. Read Pintos tests directly from Make.tests.
+1. Match the build directory's project-owned test list when a build Makefile exists.
 2. Run, debug, reset, and inspect artifacts from VS Code or the terminal.
 3. Work from direct Pintos roots or wrapper layouts such as pintos_22.04_lab_docker.
 4. Ignore stale old group JSON so built-in folders like Alarm Clock keep their intended names.
 5. Keep repeated checkbox selection responsive by reusing discovered test data until a real refresh is needed.
 ```
 
-The `Pintos` view and the `pt` / `pintos-tests` terminal commands share the same bundled helper. Both paths read `tests/*/Make.tests`, run through the same Pintos build tree, and inspect the same `output`, `result`, and `errors` artifacts.
+The `Pintos` view and the `pt` / `pintos-tests` terminal commands share the same bundled helper. Both paths prefer the build Makefile's final `TESTS` list when it exists, keep only tests owned by the current sidebar project, fall back to that project's `Make.tests` before the first build, run through the same Pintos build tree, and inspect the same `output`, `result`, and `errors` artifacts.
 
 ## Supported Layouts
 

@@ -145,7 +145,6 @@ class ProjectMeta:
     project_dir: Path
     build_dir: Path
     kernel_path: Path
-    prefixes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -168,7 +167,6 @@ def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
             project_dir=root_dir / "threads",
             build_dir=root_dir / "threads" / "build",
             kernel_path=root_dir / "threads" / "build" / "kernel.o",
-            prefixes=("tests/threads/",),
         ),
         "userprog": ProjectMeta(
             name="userprog",
@@ -176,7 +174,6 @@ def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
             project_dir=root_dir / "userprog",
             build_dir=root_dir / "userprog" / "build",
             kernel_path=root_dir / "userprog" / "build" / "kernel.o",
-            prefixes=("tests/userprog/",),
         ),
         "vm": ProjectMeta(
             name="vm",
@@ -184,7 +181,6 @@ def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
             project_dir=root_dir / "vm",
             build_dir=root_dir / "vm" / "build",
             kernel_path=root_dir / "vm" / "build" / "kernel.o",
-            prefixes=("tests/vm/",),
         ),
         "filesys": ProjectMeta(
             name="filesys",
@@ -192,7 +188,6 @@ def build_projects(root_dir: Path) -> dict[str, ProjectMeta]:
             project_dir=root_dir / "filesys",
             build_dir=root_dir / "filesys" / "build",
             kernel_path=root_dir / "filesys" / "build" / "kernel.o",
-            prefixes=("tests/filesys/",),
         ),
     }
 
@@ -628,10 +623,32 @@ def ensure_project_build_subdirs(meta: ProjectMeta) -> None:
         (meta.build_dir / Path(subdir)).mkdir(parents=True, exist_ok=True)
 
 
+def test_prefixes_for_project(meta: ProjectMeta) -> tuple[str, ...]:
+    return (f"tests/{meta.name}/",)
+
+
+def is_project_test_name(meta: ProjectMeta, value: str) -> bool:
+    normalized = str(value).replace("\\", "/")
+    return normalized.startswith(test_prefixes_for_project(meta))
+
+
+def test_directories_for_project(meta: ProjectMeta) -> list[Path]:
+    return [ROOT_DIR / "tests" / meta.name]
+
+
+def test_make_files_for_project(meta: ProjectMeta) -> list[Path]:
+    make_files: dict[Path, Path] = {}
+    for test_dir in test_directories_for_project(meta):
+        if not test_dir.exists():
+            continue
+        for make_file in test_dir.rglob("Make.tests"):
+            make_files[make_file.resolve()] = make_file
+    return [make_files[key] for key in sorted(make_files, key=lambda item: str(item))]
+
+
 def load_make_assignments(meta: ProjectMeta) -> dict[str, str]:
     assignments: dict[str, str] = {}
-    test_dir = ROOT_DIR / "tests" / meta.name
-    for make_file in sorted(test_dir.rglob("Make.tests")):
+    for make_file in test_make_files_for_project(meta):
         for line in read_make_logical_lines(make_file):
             if "+=" in line:
                 var, rhs = line.split("+=", 1)
@@ -699,12 +716,9 @@ def source_files_for_project(
     resolved_assignments = assignments if assignments is not None else load_make_assignments(meta)
     candidates: list[str] = []
     seen: set[str] = set()
-    variable_prefix = f"tests/{meta.name}"
 
     for variable_name, expression in resolved_assignments.items():
         if not variable_name.endswith("_SRC"):
-            continue
-        if not variable_name.startswith(variable_prefix):
             continue
         for item in evaluate_make_expression(expression, resolved_assignments):
             if Path(item).suffix not in SOURCE_FILE_SUFFIXES:
@@ -714,8 +728,9 @@ def source_files_for_project(
             seen.add(item)
             candidates.append(item)
 
-    project_tests_dir = ROOT_DIR / "tests" / meta.name
-    if project_tests_dir.exists():
+    for project_tests_dir in test_directories_for_project(meta):
+        if not project_tests_dir.exists():
+            continue
         for path in sorted(project_tests_dir.rglob("*")):
             if not path.is_file() or path.suffix not in SOURCE_FILE_SUFFIXES:
                 continue
@@ -797,7 +812,7 @@ def score_source_candidate(meta: ProjectMeta, full_name: str, candidate: str) ->
         int(candidate_path == expected_any_path),
         int(candidate_path.stem == full_name_path.name),
         int(candidate_path.parent == full_name_path.parent),
-        int(candidate.startswith(f"tests/{meta.name}/")),
+        int(is_project_test_name(meta, candidate)),
     )
 
 
@@ -847,6 +862,18 @@ def resolve_test_source_path(
     return max(existing, key=lambda candidate: score_source_candidate(meta, full_name, candidate))
 
 
+def display_short_name_for_test(meta: ProjectMeta, full_name: str) -> str:
+    normalized = str(full_name).replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) >= 3 and parts[0] == "tests":
+        return "/".join(parts[2:])
+    return normalized
+
+
+def is_entry_owned_by_project(meta: ProjectMeta, entry: TestEntry) -> bool:
+    return entry.full_name.startswith(f"tests/{meta.name}/")
+
+
 def build_test_entries(
     meta: ProjectMeta,
     full_names: list[str],
@@ -854,8 +881,7 @@ def build_test_entries(
 ) -> list[TestEntry]:
     entries: list[TestEntry] = []
     for index, full_name in enumerate(full_names, start=1):
-        prefix = next(prefix for prefix in meta.prefixes if full_name.startswith(prefix))
-        short_name = full_name[len(prefix):]
+        short_name = display_short_name_for_test(meta, full_name)
         group = short_name.split("/", 1)[0] if "/" in short_name else "main"
         entries.append(
             TestEntry(
@@ -873,15 +899,12 @@ def parse_tests_from_makefiles(meta: ProjectMeta) -> list[TestEntry]:
     assignments = load_make_assignments(meta)
     full_names: list[str] = []
     seen: set[str] = set()
-    variable_prefix = f"tests/{meta.name}"
 
     for variable_name, expression in assignments.items():
         if not variable_name.endswith("_TESTS"):
             continue
-        if not variable_name.startswith(variable_prefix):
-            continue
         for item in evaluate_make_expression(expression, assignments):
-            if not item.startswith(meta.prefixes):
+            if not is_project_test_name(meta, item):
                 continue
             if item in seen:
                 continue
@@ -927,19 +950,30 @@ def fetch_tests_via_make(meta: ProjectMeta) -> list[TestEntry]:
     full_names: list[str] = []
     seen: set[str] = set()
     for item in result.stdout.split():
-        if not item.startswith(meta.prefixes):
+        if not is_project_test_name(meta, item):
             continue
         if item in seen:
             continue
         seen.add(item)
         full_names.append(item)
 
-    return build_test_entries(meta, full_names, load_make_assignments(meta))
+    entries = build_test_entries(meta, full_names, load_make_assignments(meta))
+    ensure_test_output_dirs(meta, entries)
+    return entries
 
 
 def fetch_tests(meta: ProjectMeta, *, recent_first: bool = False) -> list[TestEntry]:
-    parsed_entries = parse_tests_from_makefiles(meta)
-    entries = parsed_entries if parsed_entries else fetch_tests_via_make(meta)
+    if (meta.build_dir / "Makefile").exists():
+        try:
+            entries = fetch_tests_via_make(meta)
+        except CliError:
+            parsed_entries = parse_tests_from_makefiles(meta)
+            if not parsed_entries:
+                raise
+            entries = parsed_entries
+    else:
+        parsed_entries = parse_tests_from_makefiles(meta)
+        entries = parsed_entries if parsed_entries else fetch_tests_via_make(meta)
     return sort_entries_by_history(meta, entries, recent_first=recent_first)
 
 
@@ -1426,7 +1460,15 @@ def rename_custom_test_definition(meta: ProjectMeta, old_relative_path: str, new
 def resolve_custom_target_entries(meta: ProjectMeta, target: str) -> tuple[str, list[TestEntry]]:
     normalized = normalize_custom_relative_path(target, require_custom_prefix=False)
     entries = fetch_tests(meta)
-    exact = [entry for entry in entries if entry.short_name == normalized and is_deletable_custom_test(meta, entry.short_name)]
+    exact = [
+        entry
+        for entry in entries
+        if (
+            is_entry_owned_by_project(meta, entry)
+            and entry.short_name == normalized
+            and is_deletable_custom_test(meta, entry.short_name)
+        )
+    ]
     if exact:
         return normalized, exact
 
@@ -1434,7 +1476,11 @@ def resolve_custom_target_entries(meta: ProjectMeta, target: str) -> tuple[str, 
     descendants = [
         entry
         for entry in entries
-        if entry.short_name.startswith(prefix) and is_deletable_custom_test(meta, entry.short_name)
+        if (
+            is_entry_owned_by_project(meta, entry)
+            and entry.short_name.startswith(prefix)
+            and is_deletable_custom_test(meta, entry.short_name)
+        )
     ]
     if descendants:
         return normalized, descendants
@@ -1676,7 +1722,7 @@ def debug_test(meta: ProjectMeta, entry: TestEntry, *, server_only: bool) -> int
     stop_gdb_server()
 
     server = subprocess.Popen(
-        ["bash", str(GDB_SERVER_SCRIPT), "start", meta.name, entry.short_name],
+        ["bash", str(GDB_SERVER_SCRIPT), "start", meta.name, entry.full_name],
         cwd=ROOT_DIR,
         env=make_env(),
         stdout=subprocess.PIPE,

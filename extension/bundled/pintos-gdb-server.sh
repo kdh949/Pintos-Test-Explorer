@@ -78,7 +78,7 @@ PID_FILE="$STATE_DIR/server.pid"
 usage() {
   cat <<'EOF'
 Usage:
-  pintos-gdb-server.sh start <threads|userprog|vm|filesys> <test-name>
+  pintos-gdb-server.sh start <threads|userprog|vm|filesys> <test-name-or-full-target>
   pintos-gdb-server.sh stop
 EOF
 }
@@ -140,26 +140,36 @@ resolve_output_target() {
   local run_line
   local last_output=""
 
-  case "$project" in
-    threads)
-      candidates=("tests/threads/${test_name}.output")
-      if [[ "$test_name" != */* ]]; then
-        candidates+=("tests/threads/mlfqs/${test_name}.output")
-      fi
-      ;;
-    userprog)
-      candidates=("tests/userprog/${test_name}.output")
-      ;;
-    vm)
-      candidates=("tests/vm/${test_name}.output")
-      ;;
-    filesys)
-      candidates=("tests/filesys/${test_name}.output")
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  if [[ "$test_name" == tests/* ]]; then
+    candidates=("${test_name}.output")
+  else
+    case "$project" in
+      threads)
+        candidates=("tests/threads/${test_name}.output")
+        if [[ "$test_name" != */* ]]; then
+          candidates+=("tests/threads/mlfqs/${test_name}.output")
+        fi
+        ;;
+      userprog)
+        candidates=("tests/userprog/${test_name}.output")
+        ;;
+      vm)
+        candidates=("tests/vm/${test_name}.output")
+        if [[ "$test_name" == */* ]]; then
+          candidates+=("tests/${test_name}.output")
+        fi
+        ;;
+      filesys)
+        candidates=("tests/filesys/${test_name}.output")
+        if [[ "$test_name" == */* ]]; then
+          candidates+=("tests/${test_name}.output")
+        fi
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
 
   for candidate in "${candidates[@]}"; do
     output="$(make -C "$build_dir" -B -n "$candidate" 2>&1 || true)"

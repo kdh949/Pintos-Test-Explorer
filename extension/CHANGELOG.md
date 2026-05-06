@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7
+
+- Matched sidebar and CLI discovery to the build Makefile's final `TESTS` list when available while preserving project-owned suite filtering, so `alarm-*` and `priority-*` stay under Threads instead of leaking into User Programs.
+- Passed full test targets into debug preparation, keeping debug runs in the same build tree as the sidebar run action.
+- Pinned the bundled `pt` / `pintos-tests` commands in new VS Code integrated terminals to the Pintos root discovered by the extension, so changing directories inside a wrapper workspace no longer makes the CLI read a different build tree and show different PASS/FAIL artifacts.
+- Made descendant Pintos root discovery deterministic in the sidebar by scanning child directories in name order, matching the bundled CLI.
+
 ## 0.2.4
 
 - Kept checkbox selection responsive by reusing already discovered test data instead of clearing discovery caches after every checkbox event.
