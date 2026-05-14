@@ -18,6 +18,7 @@ Watch the walkthrough: [YouTube demo video](https://youtu.be/FyJ1jKg3zNk)
 3. Prefer the Pintos root implied by the terminal's current directory before falling back to pinned PINTOS_ROOT variables, so moving between build trees reads the right artifacts.
 4. Run, debug, reset, and inspect artifacts from VS Code or the terminal.
 5. Work from direct Pintos roots or wrapper layouts such as pintos_22.04_lab_docker.
+6. Toggle `User Programs for VM` inside Virtual Memory when VM work should run userprog tests from `vm/build`.
 ```
 
 The `Pintos` view and the `pt` / `pintos-tests` terminal commands share the same bundled helper. Both paths prefer the build Makefile's final `TESTS` list when it exists, keep only tests owned by the current sidebar project, supplement/fall back with that project's nested `Make.tests` registrations, run project-level `all` actions from the build `TESTS` subset, and inspect the same `output`, `result`, and `errors` artifacts.
@@ -41,9 +42,10 @@ PINTOS_ROOT=/path/to/pintos pt list threads
 
 1. Reload the window once.
 2. Open the `Pintos` activity-bar view.
-3. Expand a project and use the row actions to open the real test source, run, or debug a test.
-4. Check folders or tests and use `Run Checked Tests`.
-5. Open `output`, `result`, or `errors` artifacts directly from the tree.
+3. For VM project work, expand Virtual Memory and enable `User Programs for VM` once.
+4. Expand a project and use the row actions to open the real test source, run, or debug a test.
+5. Check folders or tests and use `Run Checked Tests`.
+6. Open `output`, `result`, or `errors` artifacts directly from the tree.
 
 After activation, a new integrated terminal should recognize:
 

@@ -14,6 +14,7 @@ Pintos Test Explorer is a VS Code sidebar extension plus a bundled terminal CLI 
 5. Handle wrapper layouts such as pintos_22.04_lab_docker without hard-coding one folder name.
 6. Ignore stale old group JSON so built-in folders like Alarm Clock keep their intended names.
 7. Keep repeated checkbox selection fast by reusing discovered test data until a real refresh is needed.
+8. Let VM project work reuse `vm/build` for User Programs run/debug/artifact status through one persistent checkbox inside Virtual Memory.
 ```
 
 ```mermaid
@@ -41,9 +42,10 @@ Quick VS Code flow:
 1. Install the extension or load the VSIX.
 2. Reload the window once.
 3. Open the `Pintos` activity-bar view.
-4. Run or debug a test from its row.
-5. Check folders or tests and use `Run Checked Tests`.
-6. Open `output`, `result`, or `errors` artifacts directly from the tree when you need details.
+4. For VM project work, expand Virtual Memory and enable `User Programs for VM` once.
+5. Run or debug a test from its row.
+6. Check folders or tests and use `Run Checked Tests`.
+7. Open `output`, `result`, or `errors` artifacts directly from the tree when you need details.
 
 Quick terminal flow:
 

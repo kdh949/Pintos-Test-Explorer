@@ -42,6 +42,8 @@ const SORT_MODE_NUMBER = "number";
 const SORT_MODE_RECENT = "recent";
 const DEFAULT_SORT_MODE = SORT_MODE_NUMBER;
 const SORT_MODE_STATE_KEY = "pintosTests.sortMode";
+const USER_PROGRAMS_VM_BUILD_SETTING_KEY = "userProgramsVmBuild";
+const USER_PROGRAMS_VM_BUILD_STATE_KEY = "pintosTests.useVmBuildForUserPrograms";
 const PINTOS_ROOT_LAYOUTS = [
   [],
   ["pintos"],
@@ -112,6 +114,14 @@ class ProjectNode {
   }
 }
 
+class UserProgramsVmBuildSettingNode {
+  constructor(enabled) {
+    this.nodeType = "setting";
+    this.settingKey = USER_PROGRAMS_VM_BUILD_SETTING_KEY;
+    this.enabled = Boolean(enabled);
+  }
+}
+
 class GroupNode {
   constructor(project, groupSegments, summary, groupKind = "standard") {
     this.nodeType = "group";
@@ -123,9 +133,10 @@ class GroupNode {
 }
 
 class TestNode {
-  constructor(project, test, status, artifactPaths, groupSegments, statusDetail, isCustomTest) {
+  constructor(project, test, status, artifactPaths, groupSegments, statusDetail, isCustomTest, buildProject = project) {
     this.nodeType = "test";
     this.project = project;
+    this.buildProject = buildProject;
     this.test = test;
     this.status = status;
     this.artifactPaths = artifactPaths;
@@ -146,7 +157,7 @@ class ArtifactNode {
 }
 
 class PintosTreeProvider {
-  constructor(rootPath, sortMode = DEFAULT_SORT_MODE) {
+  constructor(rootPath, sortMode = DEFAULT_SORT_MODE, userProgramsVmBuildEnabled = false, onUserProgramsVmBuildChanged = null) {
     this.rootPath = rootPath;
     this._onDidChangeTreeData = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -162,6 +173,11 @@ class PintosTreeProvider {
     this.cacheGeneration = 0;
     this.nextCheckboxUpdateId = 0;
     this.sortMode = normalizeSortMode(sortMode);
+    this.userProgramsVmBuildEnabled = Boolean(userProgramsVmBuildEnabled);
+    this.onUserProgramsVmBuildChanged =
+      typeof onUserProgramsVmBuildChanged === "function"
+        ? onUserProgramsVmBuildChanged
+        : null;
   }
 
   refresh(options = {}) {
@@ -201,6 +217,39 @@ class PintosTreeProvider {
     return true;
   }
 
+  usesVmBuildForUserPrograms() {
+    return this.userProgramsVmBuildEnabled;
+  }
+
+  executionProjectFor(project) {
+    if (this.userProgramsVmBuildEnabled && project?.key === "userprog") {
+      return PROJECTS.vm;
+    }
+    return project;
+  }
+
+  executionProjectForTestNode(testNode) {
+    return this.executionProjectFor(testNode?.project) || testNode?.project;
+  }
+
+  setUserProgramsVmBuildEnabled(enabled) {
+    const nextEnabled = Boolean(enabled);
+    if (this.userProgramsVmBuildEnabled === nextEnabled) {
+      return false;
+    }
+    this.userProgramsVmBuildEnabled = nextEnabled;
+    this.cacheGeneration += 1;
+    this.testNodeCache.clear();
+    this.testNodeLoadPromises.clear();
+    if (this.onUserProgramsVmBuildChanged) {
+      this.onUserProgramsVmBuildChanged(nextEnabled);
+    }
+    appendOutput(
+      `User Programs build mode: ${nextEnabled ? "Virtual Memory build" : "User Programs build"}\n`
+    );
+    return true;
+  }
+
   makeTestKey(project, test) {
     return `${project.key}:${test.full_name}`;
   }
@@ -210,6 +259,9 @@ class PintosTreeProvider {
   }
 
   nodeCheckboxKey(node) {
+    if (node?.nodeType === "setting") {
+      return `setting:${node.settingKey}`;
+    }
     if (node?.nodeType === "project") {
       return `project:${node.project.key}`;
     }
@@ -322,6 +374,10 @@ class PintosTreeProvider {
   }
 
   async setCheckedForNode(node, checked) {
+    if (node?.nodeType === "setting" && node.settingKey === USER_PROGRAMS_VM_BUILD_SETTING_KEY) {
+      return this.setUserProgramsVmBuildEnabled(checked);
+    }
+
     const testNodes = await this.getDescendantTestNodes(node);
     const targetNodes =
       node?.nodeType === "project" && checked
@@ -393,14 +449,43 @@ class PintosTreeProvider {
   }
 
   async getTreeItem(element) {
+    if (element.nodeType === "setting") {
+      const item = new vscode.TreeItem(
+        "User Programs for VM",
+        vscode.TreeItemCollapsibleState.None
+      );
+      item.id = `setting:${element.settingKey}`;
+      item.description = element.enabled ? "userprog -> vm/build" : "userprog/build";
+      item.tooltip = element.enabled
+        ? "User Programs tests run, debug, and read artifacts from vm/build."
+        : "User Programs tests run, debug, and read artifacts from userprog/build.";
+      item.contextValue = "pintosSetting";
+      item.checkboxState =
+        this.pendingCheckboxState(element) ?? checkboxStateFromBoolean(element.enabled);
+      item.iconPath = new vscode.ThemeIcon(
+        "arrow-swap",
+        new vscode.ThemeColor(element.enabled ? "charts.green" : "descriptionForeground")
+      );
+      return item;
+    }
+
     if (element.nodeType === "project") {
       const item = new vscode.TreeItem(
         element.project.label,
         vscode.TreeItemCollapsibleState.Collapsed
       );
       item.id = `project:${element.project.key}`;
-      item.description = summaryDescription(element.summary);
-      item.tooltip = summaryTooltip(element.project.label, element.summary);
+      const description = summaryDescription(element.summary);
+      item.description =
+        element.project.key === "userprog" && this.userProgramsVmBuildEnabled
+          ? `${description} · VM build`
+          : description;
+      item.tooltip = [
+        summaryTooltip(element.project.label, element.summary),
+        element.project.key === "userprog" && this.userProgramsVmBuildEnabled
+          ? "Run, debug, and artifact status use vm/build while the Virtual Memory checkbox is enabled."
+          : null
+      ].filter(Boolean).join("\n");
       item.contextValue = "pintosProject";
       item.checkboxState =
         this.pendingCheckboxState(element) ?? summaryCheckboxState(element.summary);
@@ -488,7 +573,14 @@ class PintosTreeProvider {
 
     if (element.nodeType === "project") {
       const testNodes = await this.getTestNodesForProject(element.project);
-      return this.buildGroupChildren(element.project, [], testNodes);
+      const children = this.buildGroupChildren(element.project, [], testNodes);
+      if (element.project.key === "vm") {
+        return [
+          new UserProgramsVmBuildSettingNode(this.userProgramsVmBuildEnabled),
+          ...children
+        ];
+      }
+      return children;
     }
 
     if (element.nodeType === "group") {
@@ -647,8 +739,9 @@ class PintosTreeProvider {
   }
 
   buildTestNode(project, test, groupSegments = []) {
+    const buildProject = this.executionProjectFor(project);
     const artifactPaths = {};
-    const candidates = artifactPathsForTest(this.rootPath, project, test);
+    const candidates = artifactPathsForTest(this.rootPath, buildProject, test);
     for (const kind of ARTIFACT_ORDER) {
       const candidate = candidates[kind];
       artifactPaths[kind] = fs.existsSync(candidate) ? candidate : null;
@@ -662,7 +755,8 @@ class PintosTreeProvider {
       groupSegments,
       detail,
       isProjectOwnedTest(project, test) &&
-        isDeletableCustomTest(this.rootPath, project, test.short_name)
+        isDeletableCustomTest(this.rootPath, project, test.short_name),
+      buildProject
     );
   }
 }
@@ -1934,12 +2028,12 @@ function normalizeTestSelection(nodes) {
     });
 }
 
-async function ensureProjectBuildTree(project) {
+async function ensureProjectBuildTree(project, tests = null) {
   const buildMakefile = path.join(provider.rootPath, ...project.buildDir, "Makefile");
   if (fs.existsSync(buildMakefile)) {
     ensureProjectBuildDirectories(provider.rootPath, project);
-    const tests = await provider.getTestsForProject(project);
-    ensureTestBuildOutputDirectories(provider.rootPath, project, tests);
+    const outputTests = Array.isArray(tests) ? tests : await provider.getTestsForProject(project);
+    ensureTestBuildOutputDirectories(provider.rootPath, project, outputTests);
     return;
   }
 
@@ -1950,8 +2044,12 @@ async function ensureProjectBuildTree(project) {
     env: makeEnv(provider.rootPath)
   });
   ensureProjectBuildDirectories(provider.rootPath, project);
-  const tests = await provider.getTestsForProject(project);
-  ensureTestBuildOutputDirectories(provider.rootPath, project, tests);
+  const outputTests = Array.isArray(tests) ? tests : await provider.getTestsForProject(project);
+  ensureTestBuildOutputDirectories(provider.rootPath, project, outputTests);
+}
+
+function buildScopeKey(sourceProject, buildProject) {
+  return `${sourceProject.key}->${buildProject.key}`;
 }
 
 async function runTests(nodes) {
@@ -1964,10 +2062,17 @@ async function runTests(nodes) {
   outputChannel.show(true);
   appendOutput(`\n=== Running ${tests.length} Pintos test(s) ===\n`);
   const testsByProject = new Map();
+  const testsByBuildScope = new Map();
   for (const testNode of tests) {
     const current = testsByProject.get(testNode.project.key) || [];
     current.push(testNode.test);
     testsByProject.set(testNode.project.key, current);
+
+    const buildProject = provider.executionProjectForTestNode(testNode);
+    const scopeKey = buildScopeKey(testNode.project, buildProject);
+    const buildScopeTests = testsByBuildScope.get(scopeKey) || [];
+    buildScopeTests.push(testNode.test);
+    testsByBuildScope.set(scopeKey, buildScopeTests);
   }
   for (const [projectKey, projectTests] of testsByProject.entries()) {
     recordHistory(provider.rootPath, PROJECTS[projectKey], projectTests, "run");
@@ -1984,24 +2089,29 @@ async function runTests(nodes) {
     async (progress) => {
       for (let index = 0; index < tests.length; index += 1) {
         const testNode = tests[index];
-        const label = `${testNode.project.key}/${testNode.test.short_name}`;
-        let buildPreparationError = buildPreparationErrors.get(testNode.project.key);
+        const buildProject = provider.executionProjectForTestNode(testNode);
+        const scopeKey = buildScopeKey(testNode.project, buildProject);
+        const label =
+          buildProject.key === testNode.project.key
+            ? `${testNode.project.key}/${testNode.test.short_name}`
+            : `${testNode.project.key}/${testNode.test.short_name} via ${buildProject.key}`;
+        let buildPreparationError = buildPreparationErrors.get(scopeKey);
         if (buildPreparationError === undefined) {
           try {
-            await ensureProjectBuildTree(testNode.project);
+            await ensureProjectBuildTree(buildProject, testsByBuildScope.get(scopeKey));
             buildPreparationError = null;
           } catch (error) {
             buildPreparationError = error instanceof Error ? error.message : String(error);
             appendOutput(`${buildPreparationError}\n`);
           }
-          buildPreparationErrors.set(testNode.project.key, buildPreparationError);
+          buildPreparationErrors.set(scopeKey, buildPreparationError);
         }
 
         if (buildPreparationError) {
           failures += 1;
           ensureFailedRunArtifacts(
             provider.rootPath,
-            testNode.project,
+            buildProject,
             testNode.test,
             buildPreparationError
           );
@@ -2009,7 +2119,7 @@ async function runTests(nodes) {
           continue;
         }
 
-        const buildDir = path.join(provider.rootPath, ...testNode.project.buildDir);
+        const buildDir = path.join(provider.rootPath, ...buildProject.buildDir);
         progress.report({
           message: `[${index + 1}/${tests.length}] ${label}`,
           increment: Math.round(100 / tests.length)
@@ -2017,7 +2127,7 @@ async function runTests(nodes) {
         appendOutput(`\n$ make -C ${buildDir} --no-print-directory ${testNode.test.full_name}.result\n`);
 
         const { failures: cleanupFailures } = removeArtifactFiles(
-          Object.values(artifactPathsForTest(provider.rootPath, testNode.project, testNode.test))
+          Object.values(artifactPathsForTest(provider.rootPath, buildProject, testNode.test))
         );
         if (cleanupFailures.length) {
           failures += 1;
@@ -2027,7 +2137,7 @@ async function runTests(nodes) {
           }
           ensureFailedRunArtifacts(
             provider.rootPath,
-            testNode.project,
+            buildProject,
             testNode.test,
             [
               "Run failed before execution because existing artifacts could not be removed.",
@@ -2063,7 +2173,7 @@ async function runTests(nodes) {
         if (exitCode !== 0) {
           ensureFailedRunArtifacts(
             provider.rootPath,
-            testNode.project,
+            buildProject,
             testNode.test,
             runLog.join("").trim()
               ? runLog.join("")
@@ -2203,29 +2313,36 @@ async function startDebugServerUnlocked(rootPath, projectKey, testName) {
 
 async function prepareDebugServerForConfiguration(config) {
   const rootPath = config?.pintosRootPath || provider?.rootPath;
-  const project = PROJECTS[config?.pintosProjectKey];
+  const sourceProject = PROJECTS[config?.pintosProjectKey];
+  const buildProject = PROJECTS[config?.pintosBuildProjectKey || config?.pintosProjectKey];
   const testName = config?.pintosTestName;
 
-  if (!rootPath || !project || !testName) {
+  if (!rootPath || !sourceProject || !buildProject || !testName) {
     throw new Error("Missing Pintos debug metadata for this session.");
   }
 
   await queueDebugServerOperation(async () => {
     await stopDebugServerUnlocked();
     outputChannel.show(true);
-    appendOutput(`\n=== Debugging ${project.key}/${testName} ===\n`);
-    await ensureProjectBuildTree(project);
-    await startDebugServerUnlocked(rootPath, project.key, testName);
+    const label =
+      buildProject.key === sourceProject.key
+        ? `${sourceProject.key}/${testName}`
+        : `${sourceProject.key}/${testName} via ${buildProject.key}`;
+    appendOutput(`\n=== Debugging ${label} ===\n`);
+    await ensureProjectBuildTree(buildProject, [{ full_name: testName }]);
+    await startDebugServerUnlocked(rootPath, buildProject.key, testName);
   });
 }
 
 function buildPintosDebugConfiguration(rootPath, testNode, gdbPath) {
+  const buildProject = provider?.executionProjectForTestNode(testNode) || testNode.project;
+  const buildLabel = buildProject.key === testNode.project.key ? "" : " (VM build)";
   return {
-    name: `Pintos Debug: ${testNode.project.label} / ${testNode.test.short_name}`,
+    name: `Pintos Debug: ${testNode.project.label} / ${testNode.test.short_name}${buildLabel}`,
     type: "cppdbg",
     request: "launch",
-    program: path.join(rootPath, ...testNode.project.kernelProgram),
-    cwd: path.join(rootPath, ...testNode.project.buildDir),
+    program: path.join(rootPath, ...buildProject.kernelProgram),
+    cwd: path.join(rootPath, ...buildProject.buildDir),
     MIMode: "gdb",
     miDebuggerPath: gdbPath,
     miDebuggerServerAddress: "127.0.0.1:1234",
@@ -2242,6 +2359,7 @@ function buildPintosDebugConfiguration(rootPath, testNode, gdbPath) {
     pintosHelperSession: true,
     pintosRootPath: rootPath,
     pintosProjectKey: testNode.project.key,
+    pintosBuildProjectKey: buildProject.key,
     pintosTestName: testNode.test.full_name
   };
 }
@@ -3117,13 +3235,40 @@ function registerCommand(context, name, fn) {
   context.subscriptions.push(vscode.commands.registerCommand(name, fn));
 }
 
+function viewDescription(sortMode, userProgramsVmBuildEnabled) {
+  const normalized = normalizeSortMode(sortMode);
+  const segments = [sortModeLabel(normalized)];
+  if (userProgramsVmBuildEnabled) {
+    segments.push("User Programs: VM build");
+  }
+  return segments.join(" · ");
+}
+
+function updateTreeViewDescription(sortMode, userProgramsVmBuildEnabled) {
+  if (treeView) {
+    treeView.description = viewDescription(sortMode, userProgramsVmBuildEnabled);
+  }
+}
+
 function syncSortModeState(context, sortMode) {
   const normalized = normalizeSortMode(sortMode);
-  if (treeView) {
-    treeView.description = sortModeLabel(normalized);
-  }
+  updateTreeViewDescription(
+    normalized,
+    provider?.usesVmBuildForUserPrograms() || false
+  );
   void context.workspaceState.update(SORT_MODE_STATE_KEY, normalized);
   void vscode.commands.executeCommand("setContext", SORT_MODE_STATE_KEY, normalized);
+}
+
+function syncUserProgramsVmBuildState(context, enabled) {
+  const normalized = Boolean(enabled);
+  updateTreeViewDescription(provider?.getSortMode() || DEFAULT_SORT_MODE, normalized);
+  void context.workspaceState.update(USER_PROGRAMS_VM_BUILD_STATE_KEY, normalized);
+  void vscode.commands.executeCommand(
+    "setContext",
+    USER_PROGRAMS_VM_BUILD_STATE_KEY,
+    normalized
+  );
 }
 
 function registerPintosDebugConfigurationProvider(context) {
@@ -3175,7 +3320,15 @@ function activate(context) {
   const initialSortMode = normalizeSortMode(
     context.workspaceState.get(SORT_MODE_STATE_KEY)
   );
-  provider = new PintosTreeProvider(rootPath, initialSortMode);
+  const initialUserProgramsVmBuildEnabled = Boolean(
+    context.workspaceState.get(USER_PROGRAMS_VM_BUILD_STATE_KEY)
+  );
+  provider = new PintosTreeProvider(
+    rootPath,
+    initialSortMode,
+    initialUserProgramsVmBuildEnabled,
+    (enabled) => syncUserProgramsVmBuildState(context, enabled)
+  );
   treeView = vscode.window.createTreeView("pintosTests", {
     treeDataProvider: provider,
     // Keep multi-run behavior in a single place: the tree checkboxes.
@@ -3184,6 +3337,7 @@ function activate(context) {
     showCollapseAll: false
   });
   syncSortModeState(context, initialSortMode);
+  syncUserProgramsVmBuildState(context, initialUserProgramsVmBuildEnabled);
 
   context.subscriptions.push(outputChannel, treeView);
   outputChannel.appendLine("Pintos Test Explorer activated.");

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Added a `User Programs for VM` checkbox inside the Virtual Memory project that persists per workspace.
+- When enabled, User Programs run/debug actions and PASS/FAIL artifact reads use `vm/build` instead of `userprog/build`, making VM project work smoother without choosing a mode for every test.
+- Marked the User Programs project row and view description with the active VM build mode so the current run target is visible before launching tests.
+
 ## 0.2.9
 
 - Matched sidebar and CLI discovery to the build Makefile's final `TESTS` list when available while preserving project-owned suite filtering, so `alarm-*` and `priority-*` stay under Threads instead of leaking into User Programs.
